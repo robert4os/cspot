@@ -80,6 +80,20 @@ class PlaybackState {
   void setVolume(uint32_t volume);
 
   /**
+     * @brief Sets local shuffle state.
+     *
+     * @param shuffle shuffle status (true = enabled, false = disabled)
+     */
+  void setShuffle(bool shuffle);
+
+  /**
+     * @brief Sets local repeat state.
+     *
+     * @param repeat repeat status (true = enabled, false = disabled)
+     */
+  void setRepeat(bool repeat);
+
+  /**
    * @brief Updates local track queue from remote data.
      */
   void syncWithRemote();

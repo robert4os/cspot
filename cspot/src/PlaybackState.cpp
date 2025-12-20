@@ -118,6 +118,16 @@ void PlaybackState::syncWithRemote() {
 
   innerFrame.state.has_playing_track_index = true;
   innerFrame.state.playing_track_index = remoteFrame.state.playing_track_index;
+
+  // Sync shuffle state from remote
+  if (remoteFrame.state.has_shuffle) {
+    setShuffle(remoteFrame.state.shuffle);
+  }
+
+  // Sync repeat state from remote
+  if (remoteFrame.state.has_repeat) {
+    setRepeat(remoteFrame.state.repeat);
+  }
 }
 
 bool PlaybackState::isActive() {
@@ -142,6 +152,16 @@ void PlaybackState::updatePositionMs(uint32_t position) {
 void PlaybackState::setVolume(uint32_t volume) {
   innerFrame.device_state.volume = volume;
   ctx->config.volume = volume;
+}
+
+void PlaybackState::setShuffle(bool shuffle) {
+  innerFrame.state.shuffle = shuffle;
+  innerFrame.state.has_shuffle = true;
+}
+
+void PlaybackState::setRepeat(bool repeat) {
+  innerFrame.state.repeat = repeat;
+  innerFrame.state.has_repeat = true;
 }
 
 bool PlaybackState::decodeRemoteFrame(std::vector<uint8_t>& data) {
