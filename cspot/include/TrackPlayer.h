@@ -91,6 +91,9 @@ class TrackPlayer : bell::Task {
   std::atomic<size_t> pendingSeekPositionMs = 0;
   std::atomic<bool> startPaused = false;
 
+  // Rate limiting for failed track loads
+  std::atomic<int> consecutiveFailures = 0;
+
   std::mutex runningMutex;
 
   void runTask() override;

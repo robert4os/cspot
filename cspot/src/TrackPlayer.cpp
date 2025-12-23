@@ -1,5 +1,6 @@
 #include "TrackPlayer.h"
 
+#include <chrono>       // for steady_clock, duration_cast
 #include <mutex>        // for mutex, scoped_lock
 #include <string>       // for string
 #include <type_traits>  // for remove_extent_t
@@ -163,10 +164,24 @@ void TrackPlayer::runTask() {
 
       if (track->state != QueuedTrack::State::READY) {
         CSPOT_LOG(error, "Track failed to load, skipping it");
+        
+        // Implement exponential backoff to avoid hammering Spotify API
+        consecutiveFailures++;
+        if (consecutiveFailures > 1) {
+          // Delay: 1s, 2s, 4s, 8s, max 30s
+          int delayMs = std::min(1000 * (1 << (consecutiveFailures - 2)), 30000);
+          CSPOT_LOG(info, "Rate limiting: waiting %d ms before next track (failure #%d)", 
+                    delayMs, consecutiveFailures.load());
+          BELL_SLEEP_MS(delayMs);
+        }
+        
         this->eofCallback();
         continue;
       }
     }
+
+    // Track loaded successfully - reset failure counter
+    consecutiveFailures = 0;
 
     CSPOT_LOG(info, "Got track ID=%s", track->identifier.c_str());
 
@@ -192,6 +207,19 @@ void TrackPlayer::runTask() {
       int32_t r =
           ov_open_callbacks(this, &vorbisFile, NULL, 0, vorbisCallbacks);
 
+#ifdef BELL_VORBIS_FLOAT
+      double vorbis_duration_sec = ov_time_total(&vorbisFile, -1);
+      int64_t vorbis_duration_ms = (int64_t)(vorbis_duration_sec * 1000.0);
+#else
+      int64_t vorbis_duration_ms = ov_time_total(&vorbisFile, -1);
+#endif
+      
+      vorbis_info* vi = ov_info(&vorbisFile, -1);
+      CSPOT_LOG(debug, "[VORBIS] Opened file, CDN size=%zu bytes, vorbis reports duration=%lld ms",
+               currentTrackStream->getSize(), (long long)vorbis_duration_ms);
+      CSPOT_LOG(debug, "[VORBIS] Stream info: rate=%ld Hz, channels=%d, bitrate_nominal=%ld",
+               vi->rate, vi->channels, vi->bitrate_nominal);
+
       if (pendingSeekPositionMs > 0) {
         track->requestedPosition = pendingSeekPositionMs;
       }
@@ -204,6 +232,13 @@ void TrackPlayer::runTask() {
       track->loading = true;
 
       CSPOT_LOG(info, "Playing");
+
+      // Rate limiting: track playback start time and bytes sent
+      auto playbackStartTime = std::chrono::steady_clock::now();
+      size_t totalPCMBytes = 0;
+      size_t totalSleptMs = 0;
+      const size_t bytesPerSecond = vi->rate * vi->channels * 2;  // 44100 * 2 * 2 = 176400 bytes/sec
+      int64_t lastLogMs = 0;
 
       while (!eof && currentSongPlaying) {
         // Execute seek if needed
@@ -221,13 +256,19 @@ void TrackPlayer::runTask() {
                                pcmBuffer.size(), &currentSection);
 
         if (ret == 0) {
-          CSPOT_LOG(info, "EOF");
+          auto elapsed = std::chrono::steady_clock::now() - playbackStartTime;
+          auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+          auto expectedMs = (totalPCMBytes * 1000) / bytesPerSecond;
+          CSPOT_LOG(info, "EOF - expected time: %.1fs, decoded PCM: %zu bytes", expectedMs/1000.0, totalPCMBytes);
           // and done :)
           eof = true;
         } else if (ret < 0) {
           CSPOT_LOG(error, "An error has occured in the stream %d", ret);
           currentSongPlaying = false;
         } else {
+          // Track decoded PCM for rate limiting
+          totalPCMBytes += ret;
+          
           if (this->dataCallback != nullptr) {
             auto toWrite = ret;
 
@@ -248,11 +289,46 @@ void TrackPlayer::runTask() {
               toWrite -= written;
             }
           }
+          
+          // Rate limiting: ensure we don't decode faster than real-time playback
+          // Do this AFTER dataCallback to account for callback blocking time
+          auto elapsed = std::chrono::steady_clock::now() - playbackStartTime;
+          auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+          auto expectedMs = (totalPCMBytes * 1000) / bytesPerSecond;
+          
+          // If we've decoded ahead of real-time, sleep to stay synchronized
+          if (expectedMs > elapsedMs) {
+            int64_t sleepMs = expectedMs - elapsedMs;
+            // No cap - if we're behind, sleepMs will be 0 or negative and we won't sleep
+            
+            // Sleep in 10ms intervals to allow responsive interrupts
+            while (sleepMs > 0 && currentSongPlaying && !pendingReset) {
+              int64_t chunk = sleepMs > 10 ? 10 : sleepMs;
+              BELL_SLEEP_MS(chunk);
+              sleepMs -= chunk;
+              totalSleptMs += chunk;
+            }
+          }
+          
+          // Log every 30 seconds of expected playback time
+          if (expectedMs - lastLogMs >= 30000) {
+            CSPOT_LOG(debug, "[RATE-LIMIT] Progress: %.1fs expected, %.1fs elapsed, total slept: %.1fs", 
+                     expectedMs/1000.0, elapsedMs/1000.0, totalSleptMs/1000.0);
+            lastLogMs = expectedMs;
+          }
         }
       }
       ov_clear(&vorbisFile);
 
+      // Calculate final timing metrics
+      auto elapsed = std::chrono::steady_clock::now() - playbackStartTime;
+      auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+      auto expectedMs = (totalPCMBytes * 1000) / bytesPerSecond;
+
       CSPOT_LOG(info, "Playing done");
+      CSPOT_LOG(info, "[RATE-LIMIT] Total sleep time: %.1fs", totalSleptMs/1000.0);
+      CSPOT_LOG(info, "[ANALYSIS:TRACK_COMPLETE] expected=%lld, actual=%lld, slept=%lld",
+               expectedMs, elapsedMs, totalSleptMs);
 
       // always move back to LOADING (ensure proper seeking after last track has been loaded)
       currentTrackStream = nullptr;
@@ -284,18 +360,26 @@ int TrackPlayer::_vorbisSeek(int64_t offset, int whence) {
   if (this->currentTrackStream == nullptr) {
     return 0;
   }
+  size_t oldPos = this->currentTrackStream->getPosition();
+  size_t newPos = 0;
   switch (whence) {
     case 0:
+      newPos = offset;
       this->currentTrackStream->seek(offset);  // Spotify header offset
       break;
     case 1:
-      this->currentTrackStream->seek(this->currentTrackStream->getPosition() +
-                                     offset);
+      newPos = this->currentTrackStream->getPosition() + offset;
+      this->currentTrackStream->seek(newPos);
       break;
     case 2:
-      this->currentTrackStream->seek(this->currentTrackStream->getSize() +
-                                     offset);
+      newPos = this->currentTrackStream->getSize() + offset;
+      this->currentTrackStream->seek(newPos);
       break;
+  }
+  
+  if (newPos > oldPos + 1000000) {
+    CSPOT_LOG(debug, "[VORBIS_SEEK] Large forward seek: %zu -> %zu (whence=%d, offset=%lld)",
+             oldPos, newPos, whence, (long long)offset);
   }
 
   return 0;
