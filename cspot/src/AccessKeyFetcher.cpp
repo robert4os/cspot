@@ -104,6 +104,17 @@ void AccessKeyFetcher::updateAccessKey() {
         "https://login5.spotify.com/v3/login",
         {{"Content-Type", "application/x-protobuf"}}, encodedRequest);
 
+    // Check HTTP status
+    int statusCode = response->statusCode();
+    if (statusCode != 200) {
+      std::string retryAfter = std::string(response->header("retry-after"));
+      CSPOT_LOG(error, "Access token fetch failed: HTTP %d%s", 
+               statusCode,
+               retryAfter.empty() ? "" : (" Retry-After: " + retryAfter).c_str());
+      retryCount--;
+      continue;
+    }
+
     auto responseBytes = response->bytes();
 
     // Deserialize the response
@@ -111,22 +122,25 @@ void AccessKeyFetcher::updateAccessKey() {
 
     if (loginResponse.which_response == LoginResponse_ok_tag) {
       // Successfully received an auth token
-      CSPOT_LOG(info, "Access token sucessfully fetched");
-      success = true;
-
       accessKey = std::string(loginResponse.response.ok.access_token);
-
-      // Expire in ~30 minutes
-      int expiresIn = 3600 / 2;
-
+      
+      // Get expiration from response (default 30 minutes if not provided)
+      int expiresIn = 1800;  // 30 minutes default
+      
       if (loginResponse.response.ok.has_access_token_expires_in) {
-        int expiresIn = loginResponse.response.ok.access_token_expires_in / 2;
+        expiresIn = loginResponse.response.ok.access_token_expires_in;
+        CSPOT_LOG(info, "Access token fetched successfully (expires in %d seconds)", expiresIn);
+      } else {
+        CSPOT_LOG(info, "Access token fetched successfully (using default 30min expiration)");
       }
 
       this->expiresAt =
           ctx->timeProvider->getSyncedTimestamp() + (expiresIn * 1000);
+      success = true;
+    } else if (loginResponse.which_response == LoginResponse_error_tag) {
+      CSPOT_LOG(error, "Access token fetch failed: Spotify returned error response");
     } else {
-      CSPOT_LOG(error, "Failed to fetch access token");
+      CSPOT_LOG(error, "Access token fetch failed: Unknown response type %d", loginResponse.which_response);
     }
 
     // Free up allocated memory for response
