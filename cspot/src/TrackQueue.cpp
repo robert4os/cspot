@@ -289,6 +289,31 @@ void QueuedTrack::stepLoadCDNUrl(const std::string& accessKey) {
         requestUrl, {bell::HTTPClient::ValueHeader(
                         {"Authorization", "Bearer " + accessKey})});
 
+    // Check HTTP status code
+    int statusCode = req->statusCode();
+    if (statusCode != 200) {
+      std::string retryAfter = std::string(req->header("retry-after"));
+      std::string rateLimitReset = std::string(req->header("x-ratelimit-reset"));
+      CSPOT_LOG(error, "CDN URL fetch failed: HTTP %d%s%s", 
+               statusCode,
+               retryAfter.empty() ? "" : (" Retry-After: " + retryAfter).c_str(),
+               rateLimitReset.empty() ? "" : (" X-RateLimit-Reset: " + rateLimitReset).c_str());
+      
+      // Store status code and Retry-After value
+      this->httpStatusCode = statusCode;
+      if (!retryAfter.empty()) {
+        try {
+          this->retryAfterSeconds = std::stoi(retryAfter);
+        } catch (...) {
+          this->retryAfterSeconds = 0;
+        }
+      }
+      
+      state = State::FAILED;
+      loadedSemaphore->give();
+      return;
+    }
+
     // Wait for response
     std::string_view result = req->body();
 
@@ -305,8 +330,12 @@ void QueuedTrack::stepLoadCDNUrl(const std::string& accessKey) {
     CSPOT_LOG(info, "Received CDN URL, %s", cdnUrl.c_str());
     state = State::READY;
     loadedSemaphore->give();
+  } catch (const std::exception& e) {
+    CSPOT_LOG(error, "Cannot fetch CDN URL: %s", e.what());
+    state = State::FAILED;
+    loadedSemaphore->give();
   } catch (...) {
-    CSPOT_LOG(error, "Cannot fetch CDN URL");
+    CSPOT_LOG(error, "Cannot fetch CDN URL: unknown error");
     state = State::FAILED;
     loadedSemaphore->give();
   }
@@ -562,6 +591,16 @@ bool TrackQueue::skipTrack(SkipDirection dir, bool expectNotify) {
       }
 
       currentTracksIndex++;
+    } else if (playbackState->innerFrame.state.has_repeat &&
+               playbackState->innerFrame.state.repeat && 
+               currentTracks.size() > 0) {
+      // If repeat is enabled and we're at the end, loop back to start
+      preloadedTracks.clear();
+      currentTracksIndex = 0;
+      queueNextTrack(0);
+      if (currentTracks.size() > 1) {
+        queueNextTrack(1);
+      }
     } else {
       skipped = false;
     }
@@ -588,7 +627,17 @@ bool TrackQueue::hasTracks() {
 
 bool TrackQueue::isFinished() {
   std::scoped_lock lock(tracksMutex);
-  return currentTracksIndex >= currentTracks.size() - 1;
+  // If repeat is enabled, queue never finishes
+  if (playbackState->innerFrame.state.has_repeat && 
+      playbackState->innerFrame.state.repeat) {
+    CSPOT_LOG(debug, "[REPEAT] isFinished=false (repeat enabled, index=%d/%zu)", 
+             currentTracksIndex, currentTracks.size());
+    return false;
+  }
+  bool finished = currentTracksIndex >= currentTracks.size() - 1;
+  CSPOT_LOG(debug, "[REPEAT] isFinished=%s (no repeat, index=%d/%zu)", 
+           finished ? "true" : "false", currentTracksIndex, currentTracks.size());
+  return finished;
 }
 
 bool TrackQueue::updateTracks(uint32_t requestedPosition, bool initial) {

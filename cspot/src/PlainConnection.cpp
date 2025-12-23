@@ -52,8 +52,11 @@ void PlainConnection::connect(const std::string& apAddress) {
   h.ai_protocol = IPPROTO_IP;
 
   // Lookup host
-  if (getaddrinfo(hostname.c_str(), portStr.c_str(), &h, &airoot)) {
-    CSPOT_LOG(error, "getaddrinfo failed");
+  int gai_error = getaddrinfo(hostname.c_str(), portStr.c_str(), &h, &airoot);
+  if (gai_error != 0) {
+    CSPOT_LOG(error, "getaddrinfo failed for %s:%s - %s", 
+             hostname.c_str(), portStr.c_str(), gai_strerror(gai_error));
+    throw std::runtime_error("DNS lookup failed: " + std::string(gai_strerror(gai_error)));
   }
 
   // find the right ai, connect to server
@@ -86,6 +89,11 @@ void PlainConnection::connect(const std::string& apAddress) {
                  (char*)&flag, /* the cast is historical cruft */
                  sizeof(int)); /* length of option value */
       break;
+    } else {
+      // Log why connect failed
+      int connect_errno = errno;
+      CSPOT_LOG(debug, "connect() failed for %s:%s - %s (errno=%d)",
+               hostname.c_str(), portStr.c_str(), strerror(connect_errno), connect_errno);
     }
 
 #ifdef _WIN32
@@ -94,7 +102,12 @@ void PlainConnection::connect(const std::string& apAddress) {
     ::close(this->apSock);
 #endif
     apSock = -1;
-    throw std::runtime_error("Can't connect to spotify servers");
+  }
+  
+  if (apSock == -1) {
+    CSPOT_LOG(error, "All connection attempts failed for %s:%s", 
+             hostname.c_str(), portStr.c_str());
+    throw std::runtime_error("Can't connect to " + apAddress + " - all attempts failed");
   }
 
   freeaddrinfo(airoot);

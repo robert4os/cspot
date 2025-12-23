@@ -64,7 +64,7 @@ void Session::connectWithRandomAp() {
 
   auto apAddr = apResolver->fetchFirstApAddress();
 
-  CSPOT_LOG(debug, "Connecting with AP <%s>", apAddr.c_str());
+  CSPOT_LOG(info, "Connecting to Spotify AP: %s", apAddr.c_str());
   conn->connect(apAddr);
 
   this->connect(std::move(conn));
