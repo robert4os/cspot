@@ -84,8 +84,14 @@ std::vector<uint8_t> Session::authenticate(std::shared_ptr<LoginBlob> blob) {
   switch (packet.command) {
     case AUTH_SUCCESSFUL_COMMAND: {
       APWelcome welcome;
-      CSPOT_LOG(debug, "Authorization successful");
       pbDecode(welcome, APWelcome_fields, packet.data);
+      
+      CSPOT_LOG(info, "Authorization successful for user: %s", welcome.canonical_username);
+      CSPOT_LOG(info, "  Account type: %d, Credentials type: %d", 
+                welcome.account_type_logged_in, welcome.credentials_type_logged_in);
+      CSPOT_LOG(info, "  Reusable credentials type: %d", 
+                welcome.reusable_auth_credentials_type);
+      
       return std::vector<uint8_t>(welcome.reusable_auth_credentials.bytes,
                                   welcome.reusable_auth_credentials.bytes +
                                       welcome.reusable_auth_credentials.size);

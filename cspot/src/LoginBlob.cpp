@@ -127,6 +127,8 @@ void LoginBlob::loadZeroconf(const std::vector<uint8_t>& blob,
   this->authData =
       std::vector<uint8_t>(loginData.begin() + blobSkipPosition,
                            loginData.begin() + blobSkipPosition + authSize);
+  CSPOT_LOG(info, "Using ZEROCONF authentication (decoded type %d) for user: %s", 
+            this->authType, this->username.c_str());
 }
 
 void LoginBlob::loadUserPass(const std::string& username,
@@ -135,6 +137,7 @@ void LoginBlob::loadUserPass(const std::string& username,
   this->authData = std::vector<uint8_t>(password.begin(), password.end());
   this->authType =
       static_cast<uint32_t>(AuthenticationType_AUTHENTICATION_USER_PASS);
+  CSPOT_LOG(info, "Using USER_PASS authentication (type 0) for user: %s", username.c_str());
 }
 
 void LoginBlob::loadJson(const std::string& json) {
@@ -154,6 +157,8 @@ void LoginBlob::loadJson(const std::string& json) {
 
   this->authData = crypto->base64Decode(authDataObject);
 #endif
+  CSPOT_LOG(info, "Using STORED credentials (type %d) for user: %s", 
+            this->authType, this->username.c_str());
 }
 
 std::string LoginBlob::toJson() {
