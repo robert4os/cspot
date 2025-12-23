@@ -163,19 +163,71 @@ void TrackPlayer::runTask() {
       track->loadedSemaphore->twait(5000);
 
       if (track->state != QueuedTrack::State::READY) {
-        CSPOT_LOG(error, "Track failed to load, skipping it");
+        CSPOT_LOG(error, "Track failed to load, skipping it (httpStatus=%d, retryAfter=%d)", 
+                  track->httpStatusCode, track->retryAfterSeconds);
         
-        // Implement exponential backoff to avoid hammering Spotify API
         consecutiveFailures++;
-        if (consecutiveFailures > 1) {
-          // Delay: 1s, 2s, 4s, 8s, max 30s
-          int delayMs = std::min(1000 * (1 << (consecutiveFailures - 2)), 30000);
-          CSPOT_LOG(info, "Rate limiting: waiting %d ms before next track (failure #%d)", 
-                    delayMs, consecutiveFailures.load());
-          BELL_SLEEP_MS(delayMs);
+        
+        // Check if we should stop retrying based on error type and count
+        const int MAX_RETRIES = 12;
+        const int MAX_RATE_LIMIT_RETRIES = 3;
+        const int MAX_AUTH_RETRIES = 1;
+        
+        bool shouldGiveUp = false;
+        std::string giveUpReason = "";
+        
+        // Auth errors (401, 403) - give up immediately
+        if (track->httpStatusCode == 401 || track->httpStatusCode == 403) {
+          if (consecutiveFailures >= MAX_AUTH_RETRIES) {
+            shouldGiveUp = true;
+            giveUpReason = "authentication/authorization failure";
+          }
+        }
+        // Rate limiting (429) - give up after a few tries
+        else if (track->httpStatusCode == 429) {
+          if (consecutiveFailures >= MAX_RATE_LIMIT_RETRIES) {
+            shouldGiveUp = true;
+            giveUpReason = "persistent rate limiting";
+          }
+        }
+        // General failure limit
+        else if (consecutiveFailures >= MAX_RETRIES) {
+          shouldGiveUp = true;
+          giveUpReason = "too many consecutive failures";
         }
         
+        if (shouldGiveUp) {
+          CSPOT_LOG(error, "Giving up after %d failures (%s), stopping playback", 
+                   consecutiveFailures.load(), giveUpReason.c_str());
+          consecutiveFailures = 0;  // Reset for next playback session
+          // Don't call eofCallback - just stop trying
+          this->currentSongPlaying = false;
+          continue;
+        }
+        
+        // Apply delay BEFORE triggering skip to prevent TrackQueue from loading next track
+        int delayMs = 0;
+        
+        // Use server-provided Retry-After if available, otherwise exponential backoff
+        if (track->retryAfterSeconds > 0) {
+          delayMs = track->retryAfterSeconds * 1000;
+          CSPOT_LOG(info, "Rate limiting: waiting %d seconds as requested by server (failure #%d/%d)", 
+                    track->retryAfterSeconds, consecutiveFailures.load(), 
+                    track->httpStatusCode == 429 ? MAX_RATE_LIMIT_RETRIES : MAX_RETRIES);
+          BELL_SLEEP_MS(delayMs);
+          CSPOT_LOG(info, "Rate limiting: wait complete, resuming");
+        } else if (consecutiveFailures > 1) {
+          // Delay: 1s, 2s, 4s, 8s, max 30s
+          delayMs = std::min(1000 * (1 << (consecutiveFailures - 2)), 30000);
+          CSPOT_LOG(info, "Rate limiting: exponential backoff %d ms (failure #%d/%d)", 
+                    delayMs, consecutiveFailures.load(), MAX_RETRIES);
+          BELL_SLEEP_MS(delayMs);
+          CSPOT_LOG(info, "Rate limiting: backoff complete, resuming");
+        }
+        
+        // Now trigger skip AFTER delay
         this->eofCallback();
+        
         continue;
       }
     }

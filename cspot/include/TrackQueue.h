@@ -55,6 +55,8 @@ class QueuedTrack {
   uint32_t requestedPosition;
   std::string identifier;
   bool loading = false;
+  int retryAfterSeconds = 0;  // Server-provided retry delay (from Retry-After header)
+  int httpStatusCode = 0;      // HTTP status from CDN request (0 if not HTTP error)
 
   // Will return nullptr if the track is not ready
   std::shared_ptr<cspot::CDNAudioFile> getAudioFile();
