@@ -51,6 +51,9 @@ void CDNAudioFile::openStream() {
   this->totalFileSize =
       this->httpConnection->totalLength() - SPOTIFY_OPUS_HEADER;
 
+  CSPOT_LOG(debug, "[CDN] HTTP totalLength=%zu, computed totalFileSize=%zu (header=%d)",
+           this->httpConnection->totalLength(), this->totalFileSize, SPOTIFY_OPUS_HEADER);
+
   this->decrypt(header.data(), OPUS_HEADER_SIZE, 0);
 
   // Location must be dividable by 16
@@ -77,8 +80,19 @@ size_t CDNAudioFile::readBytes(uint8_t* dst, size_t bytes) {
   size_t offsetPosition = position + SPOTIFY_OPUS_HEADER;
   size_t actualFileSize = this->totalFileSize + SPOTIFY_OPUS_HEADER;
 
-  if (position + bytes >= this->totalFileSize) {
+  // If we're at or past EOF, return 0
+  if (position >= this->totalFileSize) {
+    CSPOT_LOG(info, "[CDN] EOF: position=%zu >= totalFileSize=%zu",
+             position, this->totalFileSize);
     return 0;
+  }
+
+  // If read would go past EOF, clamp to available bytes
+  if (position + bytes > this->totalFileSize) {
+    size_t availableBytes = this->totalFileSize - position;
+    CSPOT_LOG(info, "[CDN] Partial read: requested=%zu, available=%zu (pos=%zu, size=%zu)",
+             bytes, availableBytes, position, this->totalFileSize);
+    bytes = availableBytes;
   }
 
   // // Opus tries to read header, use prefetched data

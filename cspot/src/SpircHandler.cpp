@@ -27,7 +27,12 @@ SpircHandler::SpircHandler(std::shared_ptr<cspot::Context> ctx) {
 
   auto EOFCallback = [this]() {
     if (trackQueue->isFinished()) {
+      CSPOT_LOG(info, "[EOF] Playlist depleted - no repeat");
       sendEvent(EventType::DEPLETED);
+    } else {
+      // Queue not finished (repeat is enabled), skip to next track which will loop to start
+      CSPOT_LOG(info, "[EOF] Repeat enabled, skipping to next track (will loop)");
+      trackQueue->skipTrack(TrackQueue::SkipDirection::NEXT, true);
     }
   };
 

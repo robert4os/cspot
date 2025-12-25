@@ -294,18 +294,49 @@ void QueuedTrack::stepLoadCDNUrl(const std::string& accessKey) {
     if (statusCode != 200) {
       std::string retryAfter = std::string(req->header("retry-after"));
       std::string rateLimitReset = std::string(req->header("x-ratelimit-reset"));
+      std::string rateLimitRemaining = std::string(req->header("x-ratelimit-remaining"));
+      std::string rateLimitLimit = std::string(req->header("x-ratelimit-limit"));
+      
       CSPOT_LOG(error, "CDN URL fetch failed: HTTP %d%s%s", 
                statusCode,
                retryAfter.empty() ? "" : (" Retry-After: " + retryAfter).c_str(),
                rateLimitReset.empty() ? "" : (" X-RateLimit-Reset: " + rateLimitReset).c_str());
       
-      // Store status code and Retry-After value
+      // Log additional rate limit headers if present
+      if (!rateLimitRemaining.empty() || !rateLimitLimit.empty()) {
+        CSPOT_LOG(info, "Rate limit info: Remaining=%s, Limit=%s", 
+                 rateLimitRemaining.empty() ? "N/A" : rateLimitRemaining.c_str(),
+                 rateLimitLimit.empty() ? "N/A" : rateLimitLimit.c_str());
+      }
+      
+      // Parse and validate Retry-After header
       this->httpStatusCode = statusCode;
       if (!retryAfter.empty()) {
         try {
-          this->retryAfterSeconds = std::stoi(retryAfter);
+          int rawRetryAfter = std::stoi(retryAfter);
+          // Add +1 second buffer to account for Spotify's millisecond truncation
+          // If limit expires in 46.9s, Spotify reports "46", but retrying at 46.0s fails
+          this->retryAfterSeconds = rawRetryAfter + 1;
+          CSPOT_LOG(info, "Parsed Retry-After: %d seconds (raw: %d + 1 second buffer for truncation)", 
+                   this->retryAfterSeconds, rawRetryAfter);
         } catch (...) {
           this->retryAfterSeconds = 0;
+          CSPOT_LOG(error, "Failed to parse Retry-After header: '%s'", retryAfter.c_str());
+        }
+      } else {
+        this->retryAfterSeconds = 0;
+      }
+      
+      // Parse X-RateLimit-Reset if available (Unix timestamp)
+      if (!rateLimitReset.empty()) {
+        try {
+          long long resetTimestamp = std::stoll(rateLimitReset);
+          long long currentTime = std::time(nullptr);
+          long long secondsUntilReset = resetTimestamp - currentTime;
+          CSPOT_LOG(info, "X-RateLimit-Reset: %lld (current time: %lld, seconds until reset: %lld)",
+                   resetTimestamp, currentTime, secondsUntilReset);
+        } catch (...) {
+          CSPOT_LOG(error, "Failed to parse X-RateLimit-Reset header: '%s'", rateLimitReset.c_str());
         }
       }
       
