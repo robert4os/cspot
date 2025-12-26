@@ -119,7 +119,7 @@ class MercurySession : public bell::Task, public cspot::Session {
   uint32_t audioKeySequence = 1;
 
   unsigned long long timestampDiff;
-  unsigned long long lastPingTimestamp = -1;
+  unsigned long long lastPingTimestamp;
   std::string countryCode = "";
 
   std::mutex isRunningMutex;
