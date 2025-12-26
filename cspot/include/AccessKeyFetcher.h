@@ -32,9 +32,18 @@ class AccessKeyFetcher {
 
  private:
   std::shared_ptr<cspot::Context> ctx;
+  
+  // Authentication methods
+  void updateAccessKeyLogin5();   // ZeroConf / stored credentials
+  void updateAccessKeyOAuth2();   // OAuth2 refresh token flow
 
   std::atomic<bool> keyPending = false;
   std::string accessKey;
   long long int expiresAt;
+  
+  // Global rate limiting - shared across all instances
+  static std::atomic<long long> lastAttemptTimestamp;
+  static std::atomic<bool> globalPermanentFailure;
+  static const int MIN_RETRY_INTERVAL_MS = 5000;  // Minimum 5 seconds between any attempts
 };
 }  // namespace cspot

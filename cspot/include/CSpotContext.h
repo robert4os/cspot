@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <memory>
+#include <functional>
 
 #include "Crypto.h"
 #include "LoginBlob.h"
@@ -29,6 +30,12 @@ struct Context {
 
     std::string username;
     std::string countryCode;
+    std::string clientId;  // Optional custom Spotify client ID
+    std::string clientSecret;  // Optional custom Spotify client secret for OAuth2
+    std::string oauthTokens;  // OAuth2 tokens JSON (access_token, refresh_token, expires_at)
+    
+    // Callback to save OAuth tokens to file after refresh
+    std::function<void(const std::string& clientId, const std::string& tokensJson)> oauthTokenSaveCallback;
   };
 
   ConfigState config;
