@@ -7,6 +7,7 @@
 #include <memory>       // for shared_ptr
 #include <type_traits>  // for remove_extent_t
 #include <utility>      // for swap
+#include <sstream>      // for stringstream
 
 #include "BellLogger.h"          // for AbstractLogger
 #include "CSpotContext.h"        // for Context::ConfigState, Context (ptr o...
@@ -61,22 +62,27 @@ PlaybackState::PlaybackState(std::shared_ptr<cspot::Context> ctx) {
 
   innerFrame.device_state.name = strdup(ctx->config.deviceName.c_str());
 
-  // Prepare player's capabilities
+  // Prepare player's capabilities (matching Bose Soundtouch that supports podcasts)
   addCapability(CapabilityType_kCanBePlayer, 1);
-  addCapability(CapabilityType_kDeviceType, 4);
+  addCapability(CapabilityType_kDeviceType, 4);  // 4 = SPEAKER
   addCapability(CapabilityType_kGaiaEqConnectId, 1);
-  addCapability(CapabilityType_kSupportsLogout, 0);
+  addCapability(CapabilityType_kSupportsLogout, 1);  // Changed to 1 like Bose
   addCapability(CapabilityType_kSupportsPlaylistV2, 1);
+  addCapability(CapabilityType_kSupportsExternalEpisodes, 1);
   addCapability(CapabilityType_kIsObservable, 1);
   addCapability(CapabilityType_kVolumeSteps, 64);
+  addCapability(CapabilityType_kCommandAcks, 1);  // Added - Bose has this
   addCapability(CapabilityType_kSupportedContexts, -1,
                 std::vector<std::string>({"album", "playlist", "search",
                                           "inbox", "toplist", "starred",
-                                          "publishedstarred", "track"}));
+                                          "publishedstarred", "track",
+                                          "episode", "show"}));
   addCapability(CapabilityType_kSupportedTypes, -1,
-                std::vector<std::string>(
-                    {"audio/track", "audio/episode", "audio/episode+track"}));
-  innerFrame.device_state.capabilities_count = 8;
+                std::vector<std::string>({"audio/track", "audio/episode"}));
+  
+  // Automatically set capabilities_count to the actual number added
+  innerFrame.device_state.capabilities_count = capabilityIndex;
+  CSPOT_LOG(debug, "Initialized %d device capabilities", capabilityIndex);
 }
 
 PlaybackState::~PlaybackState() {
@@ -219,4 +225,134 @@ void PlaybackState::addCapability(CapabilityType typ, int intValue,
       .stringValue_count = stringValue.size();
 
   this->capabilityIndex += 1;
+}
+
+// Helper functions to convert enums to human-readable strings
+static const char* messageTypeToString(MessageType typ) {
+  switch (typ) {
+    case MessageType_kMessageTypeHello: return "Hello";
+    case MessageType_kMessageTypeGoodbye: return "Goodbye";
+    case MessageType_kMessageTypeProbe: return "Probe";
+    case MessageType_kMessageTypeNotify: return "Notify";
+    case MessageType_kMessageTypeLoad: return "Load";
+    case MessageType_kMessageTypePlay: return "Play";
+    case MessageType_kMessageTypePause: return "Pause";
+    case MessageType_kMessageTypePlayPause: return "PlayPause";
+    case MessageType_kMessageTypeSeek: return "Seek";
+    case MessageType_kMessageTypePrev: return "Prev";
+    case MessageType_kMessageTypeNext: return "Next";
+    case MessageType_kMessageTypeVolume: return "Volume";
+    case MessageType_kMessageTypeShuffle: return "Shuffle";
+    case MessageType_kMessageTypeRepeat: return "Repeat";
+    case MessageType_kMessageTypeVolumeUp: return "VolumeUp";
+    case MessageType_kMessageTypeVolumeDown: return "VolumeDown";
+    case MessageType_kMessageTypeReplace: return "Replace";
+    case MessageType_kMessageTypeLogout: return "Logout";
+    case MessageType_kMessageTypeAction: return "Action";
+    default: return "Unknown";
+  }
+}
+
+static const char* capabilityTypeToString(CapabilityType typ) {
+  switch (typ) {
+    case CapabilityType_kSupportedContexts: return "SupportedContexts";
+    case CapabilityType_kCanBePlayer: return "CanBePlayer";
+    case CapabilityType_kRestrictToLocal: return "RestrictToLocal";
+    case CapabilityType_kDeviceType: return "DeviceType";
+    case CapabilityType_kGaiaEqConnectId: return "GaiaEqConnectId";
+    case CapabilityType_kSupportsLogout: return "SupportsLogout";
+    case CapabilityType_kIsObservable: return "IsObservable";
+    case CapabilityType_kVolumeSteps: return "VolumeSteps";
+    case CapabilityType_kSupportedTypes: return "SupportedTypes";
+    case CapabilityType_kCommandAcks: return "CommandAcks";
+    case CapabilityType_kSupportsRename: return "SupportsRename";
+    case CapabilityType_kHidden: return "Hidden";
+    case CapabilityType_kSupportsPlaylistV2: return "SupportsPlaylistV2";
+    case CapabilityType_kSupportsExternalEpisodes: return "SupportsExternalEpisodes";
+    default: return "Unknown";
+  }
+}
+
+static const char* playStatusToString(PlayStatus status) {
+  switch (status) {
+    case PlayStatus_kPlayStatusStop: return "Stopped";
+    case PlayStatus_kPlayStatusPlay: return "Playing";
+    case PlayStatus_kPlayStatusPause: return "Paused";
+    case PlayStatus_kPlayStatusLoading: return "Loading";
+    default: return "Unknown";
+  }
+}
+
+std::string PlaybackState::dumpFrameForDebug(MessageType typ) {
+  std::stringstream ss;
+  
+  ss << "\n========================================\n";
+  ss << "SPIRC Frame Dump\n";
+  ss << "========================================\n";
+  ss << "Message Type: " << messageTypeToString(typ) << " (" << typ << ")\n";
+  ss << "Version: " << innerFrame.version << "\n";
+  ss << "Sequence Number: " << innerFrame.seq_nr << "\n";
+  ss << "Device ID: " << (innerFrame.ident ? innerFrame.ident : "NULL") << "\n";
+  ss << "Protocol Version: " << (innerFrame.protocol_version ? innerFrame.protocol_version : "NULL") << "\n";
+  ss << "State Update ID: " << innerFrame.state_update_id << "\n";
+  
+  ss << "\n--- Device State ---\n";
+  ss << "Device Name: " << (innerFrame.device_state.name ? innerFrame.device_state.name : "NULL") << "\n";
+  ss << "SW Version: " << (innerFrame.device_state.sw_version ? innerFrame.device_state.sw_version : "NULL") << "\n";
+  ss << "Is Active: " << (innerFrame.device_state.is_active ? "true" : "false") << "\n";
+  ss << "Can Play: " << (innerFrame.device_state.can_play ? "true" : "false") << "\n";
+  ss << "Volume: " << innerFrame.device_state.volume << "\n";
+  
+  if (innerFrame.device_state.has_became_active_at) {
+    ss << "Became Active At: " << innerFrame.device_state.became_active_at << "\n";
+  }
+  
+  ss << "\n--- Capabilities (" << innerFrame.device_state.capabilities_count << " total) ---\n";
+  
+  // Check if capabilities_count matches actual capabilities added
+  if (capabilityIndex != innerFrame.device_state.capabilities_count) {
+    ss << "*** WARNING: capabilities_count=" << innerFrame.device_state.capabilities_count 
+       << " but " << (int)capabilityIndex << " capabilities were added! ***\n";
+    ss << "*** Missing capabilities will NOT be sent to Spotify! ***\n\n";
+  }
+  
+  for (int i = 0; i < innerFrame.device_state.capabilities_count; i++) {
+    auto& cap = innerFrame.device_state.capabilities[i];
+    ss << "[" << i << "] " << capabilityTypeToString(cap.typ) << " (" << cap.typ << "): ";
+    
+    if (cap.intValue_count > 0) {
+      ss << cap.intValue[0];
+    }
+    
+    if (cap.stringValue_count > 0) {
+      ss << "[";
+      for (int j = 0; j < cap.stringValue_count; j++) {
+        if (j > 0) ss << ", ";
+        ss << "\"" << (cap.stringValue[j] ? cap.stringValue[j] : "NULL") << "\"";
+      }
+      ss << "]";
+    }
+    ss << "\n";
+  }
+  
+  ss << "\n--- Playback State ---\n";
+  if (innerFrame.state.has_status) {
+    ss << "Status: " << playStatusToString(innerFrame.state.status) << " (" << innerFrame.state.status << ")\n";
+  }
+  if (innerFrame.state.has_position_ms) {
+    ss << "Position: " << innerFrame.state.position_ms << " ms\n";
+  }
+  if (innerFrame.state.has_position_measured_at) {
+    ss << "Position Measured At: " << innerFrame.state.position_measured_at << "\n";
+  }
+  if (innerFrame.state.has_shuffle) {
+    ss << "Shuffle: " << (innerFrame.state.shuffle ? "true" : "false") << "\n";
+  }
+  if (innerFrame.state.has_repeat) {
+    ss << "Repeat: " << (innerFrame.state.repeat ? "true" : "false") << "\n";
+  }
+  
+  ss << "========================================\n";
+  
+  return ss.str();
 }

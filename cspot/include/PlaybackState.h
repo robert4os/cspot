@@ -106,6 +106,14 @@ class PlaybackState {
      */
   std::vector<uint8_t> encodeCurrentFrame(MessageType typ);
 
+  /**
+     * @brief Dumps current frame in human-readable format for debugging.
+     *
+     * @param typ message type being sent
+     * @return std::string human-readable frame description
+     */
+  std::string dumpFrameForDebug(MessageType typ);
+
   bool decodeRemoteFrame(std::vector<uint8_t>& data);
 };
 }  // namespace cspot

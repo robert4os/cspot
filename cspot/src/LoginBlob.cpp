@@ -1,6 +1,10 @@
 #include "LoginBlob.h"
 
 #include <stdio.h>           // for sprintf
+#include <fstream>           // for debug file writing
+#include <sstream>           // for stringstream
+#include <iomanip>           // for hex formatting
+
 #include <initializer_list>  // for initializer_list
 
 #include "BellLogger.h"                  // for AbstractLogger
@@ -204,62 +208,98 @@ void LoginBlob::loadZeroconfQuery(
 }
 
 std::string LoginBlob::buildZeroconfInfo() {
+  // Spotify ZeroConf API docs: https://developer.spotify.com/documentation/commercial-hardware/implementation/guides/zeroconf
+  
   // Encode publicKey into base64
-
   auto encodedKey = crypto->base64Encode(crypto->publicKey);
 #ifdef BELL_ONLY_CJSON
   cJSON* json_obj = cJSON_CreateObject();
   cJSON_AddNumberToObject(json_obj, "status", 101);
   cJSON_AddStringToObject(json_obj, "statusString", "OK");
+  cJSON_AddNumberToObject(json_obj, "spotifyError", 0);
+  cJSON_AddStringToObject(json_obj, "responseSource", cspot::brandName);
   cJSON_AddStringToObject(json_obj, "version", cspot::protocolVersion);
-  cJSON_AddStringToObject(json_obj, "libraryVersion", cspot::swVersion);
-  cJSON_AddStringToObject(json_obj, "accountReq", "PREMIUM");
+  cJSON_AddStringToObject(json_obj, "deviceID", deviceId.c_str());
+  cJSON_AddStringToObject(json_obj, "publicKey", encodedKey.c_str());
+  cJSON_AddStringToObject(json_obj, "remoteName", name.c_str());
+  cJSON_AddStringToObject(json_obj, "deviceType", "SPEAKER");
   cJSON_AddStringToObject(json_obj, "brandDisplayName", cspot::brandName);
   cJSON_AddStringToObject(json_obj, "modelDisplayName", name.c_str());
-  cJSON_AddStringToObject(json_obj, "voiceSupport", "NO");
-  cJSON_AddStringToObject(json_obj, "availability", this->username.c_str());
-  cJSON_AddNumberToObject(json_obj, "productID", 0);
-  cJSON_AddStringToObject(json_obj, "tokenType", "default");
-  cJSON_AddStringToObject(json_obj, "groupStatus", "NONE");
+  cJSON_AddStringToObject(json_obj, "libraryVersion", cspot::swVersion);
   cJSON_AddStringToObject(json_obj, "resolverVersion", "0");
-  cJSON_AddStringToObject(json_obj, "scope",
-                          "streaming,client-authorization-universal");
-  cJSON_AddStringToObject(json_obj, "activeUser", "");
-  cJSON_AddStringToObject(json_obj, "deviceID", deviceId.c_str());
-  cJSON_AddStringToObject(json_obj, "remoteName", name.c_str());
-  cJSON_AddStringToObject(json_obj, "publicKey", encodedKey.c_str());
-  cJSON_AddStringToObject(json_obj, "deviceType", "deviceType");
+  cJSON_AddStringToObject(json_obj, "groupStatus", "NONE");
+  cJSON_AddStringToObject(json_obj, "tokenType", "default");
+  cJSON_AddStringToObject(json_obj, "clientID", deviceId.c_str());
+  cJSON_AddNumberToObject(json_obj, "productID", 0);
+  cJSON_AddStringToObject(json_obj, "scope", "streaming");
+  cJSON_AddStringToObject(json_obj, "availability", this->username.c_str());
+  cJSON_AddNumberToObject(json_obj, "supported_capabilities", 1);
+  
 
   char* str = cJSON_PrintUnformatted(json_obj);
   cJSON_Delete(json_obj);
   std::string json_objStr(str);
   free(str);
 
+  // Debug: Write JSON to file with hash-based name (only when CSPOT_DEBUG_FILES is set)
+  if (getenv("CSPOT_DEBUG_FILES")) {
+    std::hash<std::string> hasher;
+    size_t hash = hasher(deviceId + name);
+    std::stringstream ss;
+    ss << "/tmp/spotupnp-device-zeroconf-" << deviceId.c_str() << ".json";
+    std::string filename = ss.str();
+    
+    std::ofstream outFile(filename);
+    if (outFile.is_open()) {
+      outFile << json_objStr;
+      outFile.close();
+      CSPOT_LOG(debug, "Zeroconf info saved to: %s", filename.c_str());
+    }
+  }
+
   return json_objStr;
 #else
   nlohmann::json obj;
   obj["status"] = 101;
   obj["statusString"] = "OK";
-  obj["version"] = cspot::protocolVersion;
   obj["spotifyError"] = 0;
-  obj["libraryVersion"] = cspot::swVersion;
-  obj["accountReq"] = "PREMIUM";
+  obj["responseSource"] = cspot::brandName;
+  obj["version"] = cspot::protocolVersion;
+  obj["deviceID"] = deviceId;
+  obj["publicKey"] = encodedKey;
+  obj["remoteName"] = name;
+  obj["deviceType"] = "SPEAKER";
   obj["brandDisplayName"] = cspot::brandName;
   obj["modelDisplayName"] = name;
-  obj["voiceSupport"] = "NO";
-  obj["availability"] = this->username;
-  obj["productID"] = 0;
-  obj["tokenType"] = "default";
-  obj["groupStatus"] = "NONE";
+  obj["libraryVersion"] = cspot::swVersion;
   obj["resolverVersion"] = "0";
-  obj["scope"] = "streaming,client-authorization-universal";
-  obj["activeUser"] = "";
-  obj["deviceID"] = deviceId;
-  obj["remoteName"] = name;
-  obj["publicKey"] = encodedKey;
-  obj["deviceType"] = "SPEAKER";
+  obj["groupStatus"] = "NONE";
+  obj["tokenType"] = "default";
+  obj["clientID"] = deviceId;
+  obj["productID"] = 0;
+  obj["scope"] = "streaming";
+  obj["availability"] = this->username;
+  obj["supported_capabilities"] = 1; 
 
-  return obj.dump();
+  std::string json_str = obj.dump();
+
+  // Debug: Write JSON to file with hash-based name (only when CSPOT_DEBUG_FILES is set)
+  if (getenv("CSPOT_DEBUG_FILES")) {
+    std::hash<std::string> hasher;
+    size_t hash = hasher(deviceId + name);
+    std::stringstream ss;
+    ss << "/tmp/spotupnp-device-zeroconf-" << deviceId.c_str() << ".json";
+    std::string filename = ss.str();
+    
+    std::ofstream outFile(filename);
+    if (outFile.is_open()) {
+      outFile << json_str;
+      outFile.close();
+      CSPOT_LOG(debug, "Zeroconf info saved to: %s", filename.c_str());
+    }
+  }
+
+  return json_str;
 #endif
 }
 

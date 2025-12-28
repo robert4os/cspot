@@ -4,6 +4,11 @@
 #include <memory>       // for shared_ptr, make_unique, unique_ptr
 #include <type_traits>  // for remove_extent_t
 #include <utility>      // for move
+#include <fstream>      // for debug file writing
+#include <sstream>      // for stringstream
+#include <iomanip>      // for hex formatting
+#include <chrono>       // for timestamp
+#include <ctime>        // for ctime
 
 #include "BellLogger.h"      // for AbstractLogger
 #include "CSpotContext.h"    // for Context::ConfigState, Context (ptr only)
@@ -287,6 +292,31 @@ std::shared_ptr<TrackPlayer> SpircHandler::getTrackPlayer() {
 void SpircHandler::sendCmd(MessageType typ) {
   // Serialize current player state
   auto encodedFrame = playbackState->encodeCurrentFrame(typ);
+  
+  if (typ == MessageType_kMessageTypeHello) {
+    CSPOT_LOG(debug, "Sending SPIRC Hello frame with device capabilities");
+  }
+
+  // Debug: Write SPIRC frame details to file (only when CSPOT_DEBUG_FILES is set)
+  if (getenv("CSPOT_DEBUG_FILES")) {
+    std::stringstream ss;
+    ss << "/tmp/spotupnp-device-spirc-" << ctx->config.deviceId.c_str() << ".txt";
+    std::string filename = ss.str();
+    
+    std::ofstream outFile(filename, std::ios::app);
+    if (outFile.is_open()) {
+      auto now = std::chrono::system_clock::now();
+      time_t now_time = std::chrono::system_clock::to_time_t(now);
+      
+      outFile << "\n" << std::ctime(&now_time);
+      outFile << playbackState->dumpFrameForDebug(typ);
+      outFile << "Encoded Size: " << encodedFrame.size() << " bytes\n";
+      outFile << "\n";
+      
+      outFile.close();
+      CSPOT_LOG(debug, "SPIRC frame appended to: %s", filename.c_str());
+    }
+  }
 
   auto responseLambda = [=](MercurySession::Response& res) {
   };
