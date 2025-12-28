@@ -252,7 +252,10 @@ void TrackPlayer::runTask() {
       }
 
       if (trackOffset == 0 && pendingSeekPositionMs == 0) {
-        this->trackLoaded(track, startPaused);
+        // Task is stopped before callbacks cleared (see CSpotPlayer destructor)
+        if (this->trackLoaded) {
+          this->trackLoaded(track, startPaused);
+        }
         startPaused = false;
       }
 
@@ -321,7 +324,7 @@ void TrackPlayer::runTask() {
           // Track decoded PCM for rate limiting
           totalPCMBytes += ret;
           
-          if (this->dataCallback != nullptr) {
+          if (this->dataCallback) {
             auto toWrite = ret;
 
             while (!eof && currentSongPlaying && !pendingReset && toWrite > 0) {
@@ -332,8 +335,12 @@ void TrackPlayer::runTask() {
                 if (!currentSongPlaying || pendingReset)
                   break;
 
-                written = dataCallback(pcmBuffer.data() + (ret - toWrite),
-                                       toWrite, track->identifier);
+                // Task is stopped before callback cleared (see CSpotPlayer destructor)
+                if (!this->dataCallback)
+                  break;
+
+                written = this->dataCallback(pcmBuffer.data() + (ret - toWrite),
+                                             toWrite, track->identifier);
               }
               if (written == 0) {
                 BELL_SLEEP_MS(50);
@@ -392,7 +399,10 @@ void TrackPlayer::runTask() {
         endOfQueueReached = true;
       }
 
-      this->eofCallback();
+      // Task is stopped before callbacks cleared (see CSpotPlayer destructor)
+      if (this->eofCallback) {
+        this->eofCallback();
+      }
     }
   }
 }
