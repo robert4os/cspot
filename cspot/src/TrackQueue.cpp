@@ -393,8 +393,14 @@ void QueuedTrack::stepLoadMetadata(
                           updateSemaphore](MercurySession::Response& res) {
     std::scoped_lock lock(trackListMutex);
 
+    CSPOT_LOG(info, "Mercury metadata response received: parts=%zu, fail=%d",
+              res.parts.size(), res.fail);
+
     if (res.parts.size() == 0) {
       // Invalid metadata, cannot proceed
+      CSPOT_LOG(error, "Empty metadata response for %s (type=%d, fail=%d)",
+                ref.type == TrackReference::Type::TRACK ? "track" : "episode",
+                (int)ref.type, res.fail);
       state = State::FAILED;
       updateSemaphore->give();
       loadedSemaphore->give();
