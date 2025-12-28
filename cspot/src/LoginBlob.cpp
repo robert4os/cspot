@@ -1,8 +1,6 @@
 #include "LoginBlob.h"
 
 #include <stdio.h>           // for sprintf
-#include <cstdlib>           // for std::rand, std::srand
-#include <ctime>             // for std::time
 #include <fstream>           // for debug file writing
 #include <sstream>           // for stringstream
 #include <iomanip>           // for hex formatting
@@ -27,19 +25,8 @@ LoginBlob::LoginBlob(std::string name, std::string deviceIdPrefix) {
   char hash[32];
   sprintf(hash, "%016zu", std::hash<std::string>{}(name));
   
-  // Generate random 24-character hex prefix if not provided
-  if (deviceIdPrefix.empty()) {
-    // Use time and random values for randomness
-    std::srand(static_cast<unsigned>(std::time(nullptr)) ^ std::hash<std::string>{}(name));
-    char randomHex[25];
-    for (int i = 0; i < 24; i++) {
-      randomHex[i] = "0123456789abcdef"[std::rand() % 16];
-    }
-    randomHex[24] = '\0';
-    deviceIdPrefix = std::string(randomHex);
-  }
-  
-  // base is 142137fd329622137a14901634264e6f332e2411
+  // deviceIdPrefix should always be provided by spotupnp.c (generated or loaded from config)
+  // base deviceId format: 24-char hex prefix + 16-char hash = 40 chars total
   this->deviceId = deviceIdPrefix + std::string(hash);
   this->crypto = std::make_unique<Crypto>();
   this->name = name;
@@ -261,7 +248,7 @@ std::string LoginBlob::buildZeroconfInfo() {
     std::hash<std::string> hasher;
     size_t hash = hasher(deviceId + name);
     std::stringstream ss;
-    ss << "/tmp/spotupnp-device-zeroconf-" << deviceId.c_str() << ".json";
+    ss << "/tmp/spotupnp-device-zconf-" << deviceId.c_str() << ".json";
     std::string filename = ss.str();
     
     std::ofstream outFile(filename);
@@ -303,7 +290,7 @@ std::string LoginBlob::buildZeroconfInfo() {
     std::hash<std::string> hasher;
     size_t hash = hasher(deviceId + name);
     std::stringstream ss;
-    ss << "/tmp/spotupnp-device-zeroconf-" << deviceId.c_str() << ".json";
+    ss << "/tmp/spotupnp-device-zconf-" << deviceId.c_str() << ".json";
     std::string filename = ss.str();
     
     std::ofstream outFile(filename);
