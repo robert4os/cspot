@@ -23,7 +23,7 @@ class LoginBlob {
                                            const std::string& deviceId);
 
  public:
-  LoginBlob(std::string name);
+  LoginBlob(std::string name, std::string deviceIdPrefix = "");
   std::vector<uint8_t> authData;
   std::string username = "";
   int authType;
