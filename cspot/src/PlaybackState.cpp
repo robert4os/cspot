@@ -170,13 +170,6 @@ void PlaybackState::setRepeat(bool repeat) {
   innerFrame.state.has_repeat = true;
 }
 
-uint32_t PlaybackState::getRemotePosition() const {
-  // Prefer state.position_ms if available, otherwise fall back to frame.position
-  return remoteFrame.state.has_position_ms 
-         ? remoteFrame.state.position_ms
-         : remoteFrame.position;
-}
-
 bool PlaybackState::decodeRemoteFrame(std::vector<uint8_t>& data) {
   pb_release(Frame_fields, &remoteFrame);
 

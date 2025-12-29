@@ -174,13 +174,14 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
       break;
     }
     case MessageType_kMessageTypeSeek: {
-      uint32_t seekPosition = playbackState->getRemotePosition();
+      // For Seek: frame.position is the TARGET, state.position_ms is the CURRENT position
+      // Spotify quirk: Seek uses frame.position as target (opposite of Load!)
+      uint32_t seekPosition = playbackState->remoteFrame.position;
       
-      CSPOT_LOG(info, "[SEEK] Position fields - frame.position=%u, state.position_ms=%u (has_position_ms=%d), seeking to: %u ms",
-                playbackState->remoteFrame.position,
+      CSPOT_LOG(info, "[SEEK] Seeking from %u ms to %u ms (target=frame.position=%u)",
                 playbackState->remoteFrame.state.position_ms,
-                playbackState->remoteFrame.state.has_position_ms,
-                seekPosition);
+                seekPosition,
+                playbackState->remoteFrame.position);
       
       this->trackPlayer->seekMs(seekPosition);
 
@@ -228,14 +229,16 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
 
       playbackState->setActive(true);
 
-      // Log both position fields to debug which one Spotify is using
-      CSPOT_LOG(info, "[LOAD] Position fields - frame.position=%u, state.position_ms=%u (has_position_ms=%d)",
-                playbackState->remoteFrame.position,
-                playbackState->remoteFrame.state.position_ms,
-                playbackState->remoteFrame.state.has_position_ms);
+      // For Load: state.position_ms is the TARGET position, frame.position is always 0
+      // Spotify quirk: Load uses state.position_ms as target
+      uint32_t startPosition = playbackState->remoteFrame.state.has_position_ms 
+                               ? playbackState->remoteFrame.state.position_ms
+                               : playbackState->remoteFrame.position;
       
-      uint32_t startPosition = playbackState->getRemotePosition();
-      CSPOT_LOG(info, "[LOAD] Starting playback at position: %u ms", startPosition);
+      CSPOT_LOG(info, "[LOAD] Starting playback at position: %u ms (target=state.position_ms=%u, frame.position=%u)",
+                startPosition,
+                playbackState->remoteFrame.state.position_ms,
+                playbackState->remoteFrame.position);
       
       playbackState->updatePositionMs(startPosition);
       playbackState->setPlaybackState(PlaybackState::State::Playing);
