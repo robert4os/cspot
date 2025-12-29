@@ -198,7 +198,15 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
       sendEvent(EventType::VOLUME, (int)playbackState->remoteFrame.volume);
       break;
     case MessageType_kMessageTypePause:
-      setPause(true);
+      // Sync position from Spotify's Pause command before pausing
+      // Spotify tells us the exact position, we should use it directly
+      if (playbackState->remoteFrame.state.has_position_ms) {
+        playbackState->updatePositionMs(playbackState->remoteFrame.state.position_ms);
+      }
+      // Set paused status directly without recalculating position
+      playbackState->innerFrame.state.status = PlayStatus_kPlayStatusPause;
+      notify();
+      sendEvent(EventType::PLAY_PAUSE, true);
       break;
     case MessageType_kMessageTypePlay:
       setPause(false);
