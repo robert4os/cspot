@@ -353,6 +353,11 @@ std::string PlaybackState::dumpFrameForDebug(MessageType typ) {
     ss << "Repeat: " << (innerFrame.state.repeat ? "true" : "false") << "\n";
   }
   
+  // Show playing track index for verification
+  if (innerFrame.state.has_playing_track_index) {
+    ss << "Playing Track Index: " << innerFrame.state.playing_track_index << " (reporting to Spotify)\n";
+  }
+  
   ss << "========================================\n";
   
   return ss.str();
