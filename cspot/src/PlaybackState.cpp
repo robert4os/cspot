@@ -8,6 +8,7 @@
 #include <type_traits>  // for remove_extent_t
 #include <utility>      // for swap
 #include <sstream>      // for stringstream
+#include <iomanip>      // for setw, setfill, hex
 
 #include "BellLogger.h"          // for AbstractLogger
 #include "CSpotContext.h"        // for Context::ConfigState, Context (ptr o...
@@ -456,6 +457,42 @@ std::string PlaybackState::dumpRemoteFrameForDebug() {
     output << "Position Measured At: " << remoteFrame.state.position_measured_at << "\n";
     output << "Shuffle: " << (remoteFrame.state.shuffle ? "true" : "false") << "\n";
     output << "Repeat: " << (remoteFrame.state.repeat ? "true" : "false") << "\n";
+    
+    // Track queue information
+    if (remoteFrame.state.has_playing_track_index) {
+      output << "Playing Track Index: " << remoteFrame.state.playing_track_index << "\n";
+    }
+    
+    // Show track queue if available
+    if (!remoteTracks.empty()) {
+      output << "\n--- Track Queue (" << remoteTracks.size() << " tracks) ---\n";
+      for (size_t i = 0; i < remoteTracks.size() && i < 5; i++) {
+        // Extract track identifier (GID or URI)
+        std::string trackId = "unknown";
+        if (remoteTracks[i].gid.size() > 0) {
+          // Convert GID bytes to hex string (show first 12 chars)
+          std::stringstream hexStream;
+          size_t bytesToShow = std::min<size_t>(6, remoteTracks[i].gid.size());
+          for (size_t j = 0; j < bytesToShow; j++) {
+            hexStream << std::hex << std::setfill('0') << std::setw(2) 
+                     << (int)(unsigned char)remoteTracks[i].gid[j];
+          }
+          trackId = hexStream.str();
+        }
+        
+        // Mark current track
+        const char* marker = "";
+        if (remoteFrame.state.has_playing_track_index && 
+            i == remoteFrame.state.playing_track_index) {
+          marker = " ← CURRENT";
+        }
+        
+        output << "[" << i << "] Track ID: " << trackId << marker << "\n";
+      }
+      if (remoteTracks.size() > 5) {
+        output << "... (" << (remoteTracks.size() - 5) << " more tracks)\n";
+      }
+    }
   }
   
   output << "========================================\n";
