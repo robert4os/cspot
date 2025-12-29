@@ -137,6 +137,27 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
   // Decode received spirc frame
   playbackState->decodeRemoteFrame(data);
 
+  // Debug: Write incoming SPIRC frame details to file (only when CSPOT_DEBUG_FILES is set)
+  if (getenv("CSPOT_DEBUG_FILES")) {
+    std::stringstream ss;
+    ss << "/tmp/spotupnp-device-spirc-" << ctx->config.deviceId.c_str() << ".log";
+    std::string filename = ss.str();
+    
+    std::ofstream outFile(filename, std::ios::app);
+    if (outFile.is_open()) {
+      auto now = std::chrono::system_clock::now();
+      time_t now_time = std::chrono::system_clock::to_time_t(now);
+      
+      outFile << "\n=== INCOMING FRAME ===" << std::ctime(&now_time);
+      outFile << playbackState->dumpRemoteFrameForDebug();
+      outFile << "Encoded Size: " << data.size() << " bytes\n";
+      outFile << "\n";
+      
+      outFile.close();
+      CSPOT_LOG(debug, "Incoming SPIRC frame appended to: %s", filename.c_str());
+    }
+  }
+
   switch (playbackState->remoteFrame.typ) {
     case MessageType_kMessageTypeNotify: {
       CSPOT_LOG(debug, "Notify frame");
@@ -153,13 +174,21 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
       break;
     }
     case MessageType_kMessageTypeSeek: {
-      this->trackPlayer->seekMs(playbackState->remoteFrame.position);
+      uint32_t seekPosition = playbackState->getRemotePosition();
+      
+      CSPOT_LOG(info, "[SEEK] Position fields - frame.position=%u, state.position_ms=%u (has_position_ms=%d), seeking to: %u ms",
+                playbackState->remoteFrame.position,
+                playbackState->remoteFrame.state.position_ms,
+                playbackState->remoteFrame.state.has_position_ms,
+                seekPosition);
+      
+      this->trackPlayer->seekMs(seekPosition);
 
-      playbackState->updatePositionMs(playbackState->remoteFrame.position);
+      playbackState->updatePositionMs(seekPosition);
 
       notify();
 
-      sendEvent(EventType::SEEK, (int)playbackState->remoteFrame.position);
+      sendEvent(EventType::SEEK, (int)seekPosition);
       break;
     }
     case MessageType_kMessageTypeVolume:
@@ -187,6 +216,10 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
       this->trackPlayer->start();
 
       CSPOT_LOG(debug, "Load frame %d!", playbackState->remoteTracks.size());
+      CSPOT_LOG(info, "[LOAD] Position fields: frame.position=%u, frame.state.position_ms=%u, has_position_ms=%d",
+               playbackState->remoteFrame.position,
+               playbackState->remoteFrame.state.position_ms,
+               playbackState->remoteFrame.state.has_position_ms);
 
       if (playbackState->remoteTracks.size() == 0) {
         CSPOT_LOG(info, "No tracks in frame, stopping playback");
@@ -195,14 +228,22 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
 
       playbackState->setActive(true);
 
-      playbackState->updatePositionMs(playbackState->remoteFrame.position);
+      // Log both position fields to debug which one Spotify is using
+      CSPOT_LOG(info, "[LOAD] Position fields - frame.position=%u, state.position_ms=%u (has_position_ms=%d)",
+                playbackState->remoteFrame.position,
+                playbackState->remoteFrame.state.position_ms,
+                playbackState->remoteFrame.state.has_position_ms);
+      
+      uint32_t startPosition = playbackState->getRemotePosition();
+      CSPOT_LOG(info, "[LOAD] Starting playback at position: %u ms", startPosition);
+      
+      playbackState->updatePositionMs(startPosition);
       playbackState->setPlaybackState(PlaybackState::State::Playing);
 
       playbackState->syncWithRemote();
 
-      // Update track list in case we have a new one
-      trackQueue->updateTracks(playbackState->remoteFrame.state.position_ms,
-                               true);
+      // Update track list with the same position
+      trackQueue->updateTracks(startPosition, true);
 
       this->notify();
 
@@ -300,7 +341,7 @@ void SpircHandler::sendCmd(MessageType typ) {
   // Debug: Write SPIRC frame details to file (only when CSPOT_DEBUG_FILES is set)
   if (getenv("CSPOT_DEBUG_FILES")) {
     std::stringstream ss;
-    ss << "/tmp/spotupnp-device-spirc-" << ctx->config.deviceId.c_str() << ".txt";
+    ss << "/tmp/spotupnp-device-spirc-" << ctx->config.deviceId.c_str() << ".log";
     std::string filename = ss.str();
     
     std::ofstream outFile(filename, std::ios::app);
@@ -308,7 +349,7 @@ void SpircHandler::sendCmd(MessageType typ) {
       auto now = std::chrono::system_clock::now();
       time_t now_time = std::chrono::system_clock::to_time_t(now);
       
-      outFile << "\n" << std::ctime(&now_time);
+      outFile << "\n=== OUTGOING FRAME ===" << std::ctime(&now_time);
       outFile << playbackState->dumpFrameForDebug(typ);
       outFile << "Encoded Size: " << encodedFrame.size() << " bytes\n";
       outFile << "\n";

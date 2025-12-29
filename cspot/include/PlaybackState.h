@@ -114,6 +114,22 @@ class PlaybackState {
      */
   std::string dumpFrameForDebug(MessageType typ);
 
+  /**
+     * @brief Dumps incoming remote frame in human-readable format for debugging.
+     *
+     * @return std::string human-readable remote frame description
+     */
+  std::string dumpRemoteFrameForDebug();
+
+  /**
+     * @brief Gets position from remote frame with proper fallback.
+     * 
+     * Prefers state.position_ms if available, falls back to frame.position.
+     *
+     * @return uint32_t position in milliseconds
+     */
+  uint32_t getRemotePosition() const;
+
   bool decodeRemoteFrame(std::vector<uint8_t>& data);
 };
 }  // namespace cspot

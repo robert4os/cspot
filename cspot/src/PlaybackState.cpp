@@ -170,6 +170,13 @@ void PlaybackState::setRepeat(bool repeat) {
   innerFrame.state.has_repeat = true;
 }
 
+uint32_t PlaybackState::getRemotePosition() const {
+  // Prefer state.position_ms if available, otherwise fall back to frame.position
+  return remoteFrame.state.has_position_ms 
+         ? remoteFrame.state.position_ms
+         : remoteFrame.position;
+}
+
 bool PlaybackState::decodeRemoteFrame(std::vector<uint8_t>& data) {
   pb_release(Frame_fields, &remoteFrame);
 
@@ -355,4 +362,109 @@ std::string PlaybackState::dumpFrameForDebug(MessageType typ) {
   ss << "========================================\n";
   
   return ss.str();
+}
+
+std::string PlaybackState::dumpRemoteFrameForDebug() {
+  std::stringstream output;
+  
+  output << "\n========================================\n";
+  output << "SPIRC Frame Dump (INCOMING)\n";
+  output << "========================================\n";
+  
+  // Message type
+  const char* typeStr = "Unknown";
+  switch (remoteFrame.typ) {
+    case MessageType_kMessageTypeHello: typeStr = "Hello (1)"; break;
+    case MessageType_kMessageTypeGoodbye: typeStr = "Goodbye (2)"; break;
+    case MessageType_kMessageTypeProbe: typeStr = "Probe (3)"; break;
+    case MessageType_kMessageTypeNotify: typeStr = "Notify (10)"; break;
+    case MessageType_kMessageTypeLoad: typeStr = "Load (20)"; break;
+    case MessageType_kMessageTypePlay: typeStr = "Play (21)"; break;
+    case MessageType_kMessageTypePause: typeStr = "Pause (22)"; break;
+    case MessageType_kMessageTypePlayPause: typeStr = "PlayPause (23)"; break;
+    case MessageType_kMessageTypeSeek: typeStr = "Seek (24)"; break;
+    case MessageType_kMessageTypePrev: typeStr = "Prev (25)"; break;
+    case MessageType_kMessageTypeNext: typeStr = "Next (26)"; break;
+    case MessageType_kMessageTypeVolume: typeStr = "Volume (27)"; break;
+    case MessageType_kMessageTypeShuffle: typeStr = "Shuffle (28)"; break;
+    case MessageType_kMessageTypeRepeat: typeStr = "Repeat (29)"; break;
+    default: break;
+  }
+  output << "Message Type: " << typeStr << "\n";
+  output << "Version: " << remoteFrame.version << "\n";
+  output << "Sequence Number: " << remoteFrame.seq_nr << "\n";
+  output << "Device ID: " << (remoteFrame.ident ? remoteFrame.ident : "NULL") << "\n";
+  output << "Protocol Version: " << (remoteFrame.protocol_version ? remoteFrame.protocol_version : "NULL") << "\n";
+  output << "State Update ID: " << remoteFrame.state_update_id << "\n";
+  output << "Top-level Position (frame.position): " << remoteFrame.position << " ms\n";
+  output << "Has State: " << (remoteFrame.has_state ? "yes" : "no") << "\n";
+  
+  // Device state
+  if (remoteFrame.has_device_state) {
+    output << "\n--- Device State ---\n";
+    output << "Device Name: " << (remoteFrame.device_state.name ? remoteFrame.device_state.name : "NULL") << "\n";
+    output << "SW Version: " << (remoteFrame.device_state.sw_version ? remoteFrame.device_state.sw_version : "NULL") << "\n";
+    output << "Is Active: " << (remoteFrame.device_state.is_active ? "true" : "false") << "\n";
+    output << "Can Play: " << (remoteFrame.device_state.can_play ? "true" : "false") << "\n";
+    output << "Volume: " << remoteFrame.device_state.volume << "\n";
+    
+    if (remoteFrame.device_state.has_became_active_at) {
+      output << "Became Active At: " << remoteFrame.device_state.became_active_at << "\n";
+    }
+  }
+  
+  // Capabilities (skipped - C array structure)
+  if (false && remoteFrame.has_device_state) {
+    output << "\n--- Capabilities ---\n";
+    // Commented out - capabilities is a C array, not a vector
+    /*
+    for (size_t i = 0; i < 17 && i < 20; i++) {
+      const auto& cap = remoteFrame.device_state.capabilities[i];
+      const char* capTypeStr = "Unknown";
+      switch (cap.typ) {
+        case CapabilityType_kSupportedContexts: capTypeStr = "SupportedContexts (1)"; break;
+        case CapabilityType_kCanBePlayer: capTypeStr = "CanBePlayer (2)"; break;
+        case CapabilityType_kRestrictToLocal: capTypeStr = "RestrictToLocal (3)"; break;
+        case CapabilityType_kDeviceType: capTypeStr = "DeviceType (4)"; break;
+        case CapabilityType_kGaiaEqConnectId: capTypeStr = "GaiaEqConnectId (5)"; break;
+        case CapabilityType_kSupportsLogout: capTypeStr = "SupportsLogout (6)"; break;
+        case CapabilityType_kIsObservable: capTypeStr = "IsObservable (7)"; break;
+        case CapabilityType_kVolumeSteps: capTypeStr = "VolumeSteps (8)"; break;
+        case CapabilityType_kSupportedTypes: capTypeStr = "SupportedTypes (9)"; break;
+        case CapabilityType_kCommandAcks: capTypeStr = "CommandAcks (10)"; break;
+        case CapabilityType_kSupportsRename: capTypeStr = "SupportsRename (11)"; break;
+        case CapabilityType_kHidden: capTypeStr = "Hidden (12)"; break;
+        case CapabilityType_kSupportsPlaylistV2: capTypeStr = "SupportsPlaylistV2 (13)"; break;
+        case CapabilityType_kSupportsExternalEpisodes: capTypeStr = "SupportsExternalEpisodes (14)"; break;
+        default: break;
+      }
+      output << "[" << i << "] " << capTypeStr << "\n";
+    }
+    */
+  }
+  
+  // Playback state
+  if (remoteFrame.has_state) {
+    output << "\n--- Playback State ---\n";
+    const char* statusStr = "Unknown";
+    switch (remoteFrame.state.status) {
+      case PlayStatus_kPlayStatusStop: statusStr = "Stopped (0)"; break;
+      case PlayStatus_kPlayStatusPlay: statusStr = "Playing (1)"; break;
+      case PlayStatus_kPlayStatusPause: statusStr = "Paused (2)"; break;
+      case PlayStatus_kPlayStatusLoading: statusStr = "Loading (3)"; break;
+      default: break;
+    }
+    output << "Status: " << statusStr << "\n";
+    output << "Position: " << remoteFrame.state.position_ms << " ms";
+    if (!remoteFrame.state.has_position_ms) {
+      output << " (not set, using frame.position=" << remoteFrame.position << " ms)";
+    }
+    output << "\n";
+    output << "Position Measured At: " << remoteFrame.state.position_measured_at << "\n";
+    output << "Shuffle: " << (remoteFrame.state.shuffle ? "true" : "false") << "\n";
+    output << "Repeat: " << (remoteFrame.state.repeat ? "true" : "false") << "\n";
+  }
+  
+  output << "========================================\n";
+  return output.str();
 }
