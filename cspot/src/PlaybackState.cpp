@@ -102,15 +102,21 @@ void PlaybackState::setPlaybackState(const PlaybackState::State state) {
       break;
     case State::Playing:
       innerFrame.state.status = PlayStatus_kPlayStatusPlay;
-      innerFrame.state.position_measured_at =
-          ctx->timeProvider->getSyncedTimestamp();
+      // Initialize position_measured_at if not set (first time playing)
+      if (innerFrame.state.position_measured_at == 0) {
+        innerFrame.state.position_measured_at = ctx->timeProvider->getSyncedTimestamp();
+        CSPOT_LOG(info, "[POSITION] Initialized position_measured_at=%llu", 
+                  innerFrame.state.position_measured_at);
+      }
+      // Don't reset position_measured_at here - let encodeCurrentFrame() update it
+      // This allows position tracking to work correctly during continuous playback
       break;
     case State::Stopped:
       break;
     case State::Paused:
       // Update state and recalculate current song position
       innerFrame.state.status = PlayStatus_kPlayStatusPause;
-      uint32_t diff = ctx->timeProvider->getSyncedTimestamp() -
+      uint64_t diff = ctx->timeProvider->getSyncedTimestamp() -
                       innerFrame.state.position_measured_at;
       this->updatePositionMs(innerFrame.state.position_ms + diff);
       break;
@@ -151,9 +157,18 @@ void PlaybackState::setActive(bool isActive) {
 }
 
 void PlaybackState::updatePositionMs(uint32_t position) {
+  uint32_t oldPosition = innerFrame.state.position_ms;
+  uint64_t now = ctx->timeProvider->getSyncedTimestamp();
+  uint64_t oldMeasuredAt = innerFrame.state.position_measured_at;
+  
+  // Always update both position and measured_at together
+  // This ensures encodeCurrentFrame() extrapolation works correctly
   innerFrame.state.position_ms = position;
-  innerFrame.state.position_measured_at =
-      ctx->timeProvider->getSyncedTimestamp();
+  innerFrame.state.position_measured_at = now;
+  
+  int32_t positionDiff = (int32_t)position - (int32_t)oldPosition;
+  CSPOT_LOG(debug, "[POSITION] Updated: pos %u->%u (diff=%d ms), measured_at %llu->%llu",
+            oldPosition, position, positionDiff, oldMeasuredAt, now);
 }
 
 void PlaybackState::setVolume(uint32_t volume) {
@@ -182,6 +197,29 @@ bool PlaybackState::decodeRemoteFrame(std::vector<uint8_t>& data) {
 }
 
 std::vector<uint8_t> PlaybackState::encodeCurrentFrame(MessageType typ) {
+  // Update position based on elapsed time if playing
+  // This ensures Spotify UI shows correct position even without frequent SHADOW_TIME updates
+  if (innerFrame.state.status == PlayStatus_kPlayStatusPlay) {
+    uint64_t now = ctx->timeProvider->getSyncedTimestamp();
+    uint64_t prev_measured = innerFrame.state.position_measured_at;
+    uint32_t prev_pos = innerFrame.state.position_ms;
+    uint32_t elapsed = now - innerFrame.state.position_measured_at;
+    
+    CSPOT_LOG(info, "Position update: now=%llu, prev_measured=%llu, prev_pos=%u, elapsed=%u",
+              now, prev_measured, prev_pos, elapsed);
+    
+    // Only update if elapsed time is reasonable (< 60 seconds) to handle pauses
+    // Anything over 60s is likely a timestamp error or very long pause
+    if (elapsed < 60000) {
+      innerFrame.state.position_ms += elapsed;
+      innerFrame.state.position_measured_at = now;
+      CSPOT_LOG(info, "Position updated: new_pos=%u, new_measured=%llu",
+                innerFrame.state.position_ms, innerFrame.state.position_measured_at);
+    } else {
+      CSPOT_LOG(info, "Position update SKIPPED: elapsed=%u ms (>= 60000)", elapsed);
+    }
+  }
+  
   // Prepare current frame info
   innerFrame.version = 1;
   innerFrame.seq_nr = this->seqNum;
@@ -397,6 +435,18 @@ std::string PlaybackState::dumpRemoteFrameForDebug() {
   output << "State Update ID: " << remoteFrame.state_update_id << "\n";
   output << "Top-level Position (frame.position): " << remoteFrame.position << " ms\n";
   output << "Has State: " << (remoteFrame.has_state ? "yes" : "no") << "\n";
+  
+  // Recipients
+  if (remoteFrame.recipient_count > 0) {
+    output << "Recipients (" << remoteFrame.recipient_count << "): ";
+    for (size_t i = 0; i < remoteFrame.recipient_count; i++) {
+      if (i > 0) output << ", ";
+      output << (remoteFrame.recipient[i] ? remoteFrame.recipient[i] : "NULL");
+    }
+    output << "\n";
+  } else {
+    output << "Recipients: (broadcast - no specific recipients)\n";
+  }
   
   // Device state
   if (remoteFrame.has_device_state) {

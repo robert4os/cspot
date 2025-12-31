@@ -50,6 +50,10 @@ class TrackPlayer : bell::Task {
   // CDNTrackStream::TrackInfo getCurrentTrackInfo();
   void seekMs(size_t ms);
   void resetState(bool paused = false);
+  
+  // Recalibrate playback timer to exclude paused time
+  // Call this when resuming from pause
+  void recalibrateTimer();
 
   // Vorbis codec callbacks
   size_t _vorbisRead(void* ptr, size_t size, size_t nmemb);
@@ -93,6 +97,10 @@ class TrackPlayer : bell::Task {
 
   // Rate limiting for failed track loads
   std::atomic<int> consecutiveFailures = 0;
+
+  // Playback timing for rate limiting (excludes paused time)
+  std::chrono::steady_clock::time_point playbackStartTime;
+  std::atomic<bool> needsTimerRecalibration = false;
 
   std::mutex runningMutex;
 

@@ -26,6 +26,27 @@
 
 using namespace cspot;
 
+// Helper to get message type name for logging
+static std::string getMessageTypeName(MessageType typ) {
+  switch (typ) {
+    case MessageType_kMessageTypeHello: return "Hello";
+    case MessageType_kMessageTypeGoodbye: return "Goodbye";  
+    case MessageType_kMessageTypeProbe: return "Probe";
+    case MessageType_kMessageTypeNotify: return "Notify";
+    case MessageType_kMessageTypeLoad: return "Load";
+    case MessageType_kMessageTypePlay: return "Play";
+    case MessageType_kMessageTypePause: return "Pause";
+    case MessageType_kMessageTypeSeek: return "Seek";
+    case MessageType_kMessageTypeNext: return "Next";
+    case MessageType_kMessageTypePrev: return "Prev";
+    case MessageType_kMessageTypeVolume: return "Volume";
+    case MessageType_kMessageTypeShuffle: return "Shuffle";
+    case MessageType_kMessageTypeRepeat: return "Repeat";
+    case MessageType_kMessageTypeReplace: return "Replace";
+    default: return "Unknown";
+  }
+}
+
 SpircHandler::SpircHandler(std::shared_ptr<cspot::Context> ctx) {
   this->playbackState = std::make_shared<PlaybackState>(ctx);
   this->trackQueue = std::make_shared<cspot::TrackQueue>(ctx, playbackState);
@@ -57,6 +78,9 @@ SpircHandler::SpircHandler(std::shared_ptr<cspot::Context> ctx) {
   this->ctx = ctx;
   this->trackPlayer = std::make_shared<TrackPlayer>(
       ctx, trackQueue, EOFCallback, trackLoadedCallback);
+
+  // Position updates are event-driven (trackLoaded, pause, seek, etc.)
+  // No periodic callback needed - follows Spotify protocol (RH/librespot/07-STATE-SYNCHRONIZATION.md)
 
   // Subscribe to mercury on session ready
   ctx->session->setConnectedHandler([this]() { this->subscribeToMercury(); });
@@ -158,6 +182,47 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
     }
   }
 
+  // CRITICAL: Filter frames not addressed to us
+  // SPIRC is a broadcast protocol - we receive ALL messages from ALL devices
+  // Spotify uses 'recipient' field to target specific devices
+  // We should only process:
+  // 1. Commands explicitly addressed to us (recipient matches our device ID)
+  // 2. Broadcast commands (no recipients specified) - these affect all devices
+  // 3. Notify frames from other devices (for takeover detection)
+  
+  bool isAddressedToUs = false;
+  bool isBroadcast = (playbackState->remoteFrame.recipient_count == 0);
+  bool isNotify = (playbackState->remoteFrame.typ == MessageType_kMessageTypeNotify);
+  bool isFromUs = (playbackState->remoteFrame.ident != nullptr && 
+                   std::string(playbackState->remoteFrame.ident) == ctx->config.deviceId);
+  
+  // Never process our own frames (shouldn't happen, but be defensive)
+  if (isFromUs) {
+    CSPOT_LOG(debug, "Ignoring frame from ourselves");
+    return;
+  }
+  
+  // Check if this frame is addressed to us
+  for (size_t i = 0; i < playbackState->remoteFrame.recipient_count; i++) {
+    if (playbackState->remoteFrame.recipient[i] != nullptr &&
+        std::string(playbackState->remoteFrame.recipient[i]) == ctx->config.deviceId) {
+      isAddressedToUs = true;
+      break;
+    }
+  }
+  
+  // Process frame only if:
+  // - It's a Notify frame (needed for takeover detection), OR
+  // - It's addressed to us, OR
+  // - It's a broadcast (no recipients specified)
+  if (!isNotify && !isAddressedToUs && !isBroadcast) {
+    CSPOT_LOG(debug, "Ignoring %s command from device %s (addressed to %d other recipients)",
+              getMessageTypeName(playbackState->remoteFrame.typ).c_str(),
+              playbackState->remoteFrame.ident ? playbackState->remoteFrame.ident : "unknown",
+              playbackState->remoteFrame.recipient_count);
+    return;
+  }
+
   switch (playbackState->remoteFrame.typ) {
     case MessageType_kMessageTypeNotify: {
       CSPOT_LOG(debug, "Notify frame");
@@ -198,12 +263,8 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
       sendEvent(EventType::VOLUME, (int)playbackState->remoteFrame.volume);
       break;
     case MessageType_kMessageTypePause:
-      // Sync position from Spotify's Pause command before pausing
-      // Spotify tells us the exact position, we should use it directly
-      if (playbackState->remoteFrame.state.has_position_ms) {
-        playbackState->updatePositionMs(playbackState->remoteFrame.state.position_ms);
-      }
-      // Set paused status directly without recalculating position
+      // Don't sync position from remote - we are the authoritative source
+      // Just pause at our current playback position
       playbackState->innerFrame.state.status = PlayStatus_kPlayStatusPause;
       notify();
       sendEvent(EventType::PLAY_PAUSE, true);
@@ -389,6 +450,9 @@ void SpircHandler::setPause(bool isPaused) {
     CSPOT_LOG(debug, "External play command");
 
     playbackState->setPlaybackState(PlaybackState::State::Playing);
+    
+    // Recalibrate playback timer to exclude paused time
+    trackPlayer->recalibrateTimer();
   }
   notify();
   sendEvent(EventType::PLAY_PAUSE, isPaused);

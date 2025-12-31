@@ -107,6 +107,15 @@ void TrackPlayer::seekMs(size_t ms) {
 
   CSPOT_LOG(info, "Seeking...");
   this->pendingSeekPositionMs = ms;
+  
+  // Mark that timer needs recalibration after seek completes
+  this->needsTimerRecalibration = true;
+}
+
+void TrackPlayer::recalibrateTimer() {
+  // Signal the playback loop to recalibrate timing
+  // This excludes paused time from elapsed time calculation
+  this->needsTimerRecalibration = true;
 }
 
 void TrackPlayer::runTask() {
@@ -289,7 +298,7 @@ void TrackPlayer::runTask() {
       CSPOT_LOG(info, "Playing");
 
       // Rate limiting: track playback start time and bytes sent
-      auto playbackStartTime = std::chrono::steady_clock::now();
+      playbackStartTime = std::chrono::steady_clock::now();
       size_t totalPCMBytes = 0;
       size_t totalSleptMs = 0;
       const size_t bytesPerSecond = vi->rate * vi->channels * 2;  // 44100 * 2 * 2 = 176400 bytes/sec
@@ -305,6 +314,21 @@ void TrackPlayer::runTask() {
 
           // Seek to the new position
           VORBIS_SEEK(&vorbisFile, seekPosition);
+        }
+        
+        // Recalibrate timer if needed (after seek or resume from pause)
+        // This synchronizes elapsed time with actual decoded audio progress
+        if (needsTimerRecalibration) {
+          auto decodedMs = (totalPCMBytes * 1000) / bytesPerSecond;
+          auto now = std::chrono::steady_clock::now();
+          auto oldStartTime = playbackStartTime;
+          auto oldElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - oldStartTime).count();
+          
+          playbackStartTime = now - std::chrono::milliseconds(decodedMs);
+          needsTimerRecalibration = false;
+          
+          CSPOT_LOG(info, "[TIMER] Recalibrated: decoded=%lldms, old_elapsed=%lldms, adjustment=%lldms, totalSlept=%lldms",
+                    decodedMs, oldElapsed, (int64_t)decodedMs - oldElapsed, totalSleptMs);
         }
 
         long ret = VORBIS_READ(&vorbisFile, (char*)&pcmBuffer[0],
@@ -323,6 +347,24 @@ void TrackPlayer::runTask() {
         } else {
           // Track decoded PCM for rate limiting
           totalPCMBytes += ret;
+          
+          // Rate limiting: Calculate sleep time BEFORE dataCallback to avoid counting callback blocking time
+          auto beforeCallback = std::chrono::steady_clock::now();
+          auto elapsed = beforeCallback - playbackStartTime;
+          auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+          auto expectedMs = (totalPCMBytes * 1000) / bytesPerSecond;
+          int64_t sleepMs = (expectedMs > elapsedMs) ? (expectedMs - elapsedMs) : 0;
+          
+          // Detailed logging every 10 seconds
+          if (expectedMs - lastLogMs >= 10000) {
+            CSPOT_LOG(info, "[RATE-LIMIT] totalPCM=%llu bytes (%.1fs expected), elapsed=%.1fs, sleep=%lld ms",
+                     totalPCMBytes, expectedMs/1000.0, elapsedMs/1000.0, sleepMs);
+            lastLogMs = expectedMs;
+          }
+          
+          // Position updates are now event-driven (pause/resume/seek) per Spotify protocol
+          // No periodic updates needed - remote clients use client-side prediction
+          // See: RH/librespot/07-STATE-SYNCHRONIZATION.md
           
           if (this->dataCallback) {
             auto toWrite = ret;
@@ -349,31 +391,25 @@ void TrackPlayer::runTask() {
             }
           }
           
-          // Rate limiting: ensure we don't decode faster than real-time playback
-          // Do this AFTER dataCallback to account for callback blocking time
-          auto elapsed = std::chrono::steady_clock::now() - playbackStartTime;
-          auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
-          auto expectedMs = (totalPCMBytes * 1000) / bytesPerSecond;
-          
-          // If we've decoded ahead of real-time, sleep to stay synchronized
-          if (expectedMs > elapsedMs) {
-            int64_t sleepMs = expectedMs - elapsedMs;
-            // No cap - if we're behind, sleepMs will be 0 or negative and we won't sleep
-            
-            // Sleep in 10ms intervals to allow responsive interrupts
-            while (sleepMs > 0 && currentSongPlaying && !pendingReset) {
-              int64_t chunk = sleepMs > 10 ? 10 : sleepMs;
-              BELL_SLEEP_MS(chunk);
-              sleepMs -= chunk;
-              totalSleptMs += chunk;
-            }
+          // Rate limiting: Sleep to synchronize with real-time playback
+          // Do this AFTER dataCallback, but use sleep time calculated BEFORE callback
+          // This ensures callback blocking time doesn't reduce our sleep time
+          int64_t actualSlept = 0;
+          while (sleepMs > 0 && currentSongPlaying && !pendingReset) {
+            int64_t chunk = sleepMs > 10 ? 10 : sleepMs;
+            BELL_SLEEP_MS(chunk);
+            sleepMs -= chunk;
+            totalSleptMs += chunk;
+            actualSlept += chunk;
           }
           
-          // Log every 30 seconds of expected playback time
-          if (expectedMs - lastLogMs >= 30000) {
-            CSPOT_LOG(debug, "[RATE-LIMIT] Progress: %.1fs expected, %.1fs elapsed, total slept: %.1fs", 
-                     expectedMs/1000.0, elapsedMs/1000.0, totalSleptMs/1000.0);
-            lastLogMs = expectedMs;
+          // Log callback and sleep timing every 10 seconds
+          if (actualSlept > 0 || (expectedMs % 10000 < 1000)) {
+            auto afterCallback = std::chrono::steady_clock::now();
+            auto callbackDuration = std::chrono::duration_cast<std::chrono::milliseconds>(afterCallback - beforeCallback).count();
+            CSPOT_LOG(info, "[RATE-LIMIT] Callback took %lld ms, slept %lld ms, now elapsed %.1fs",
+                     callbackDuration, actualSlept, 
+                     std::chrono::duration_cast<std::chrono::milliseconds>(afterCallback - playbackStartTime).count()/1000.0);
           }
         }
       }
