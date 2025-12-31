@@ -403,14 +403,7 @@ void TrackPlayer::runTask() {
             actualSlept += chunk;
           }
           
-          // Log callback and sleep timing every 10 seconds
-          if (actualSlept > 0 || (expectedMs % 10000 < 1000)) {
-            auto afterCallback = std::chrono::steady_clock::now();
-            auto callbackDuration = std::chrono::duration_cast<std::chrono::milliseconds>(afterCallback - beforeCallback).count();
-            CSPOT_LOG(info, "[RATE-LIMIT] Callback took %lld ms, slept %lld ms, now elapsed %.1fs",
-                     callbackDuration, actualSlept, 
-                     std::chrono::duration_cast<std::chrono::milliseconds>(afterCallback - playbackStartTime).count()/1000.0);
-          }
+          // Rate-limit logging removed - summary available at track completion
         }
       }
       ov_clear(&vorbisFile);

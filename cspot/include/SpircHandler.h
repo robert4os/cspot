@@ -1,5 +1,11 @@
 #pragma once
 
+// ============================================
+// DEBUG: Set to 1 to disable debouncing delays for testing
+// ============================================
+#define CSPOT_DEBUG_NODELAY 1
+// ============================================
+
 #include <stdint.h>    // for uint32_t, uint8_t
 #include <functional>  // for function
 #include <memory>      // for shared_ptr, unique_ptr
@@ -41,6 +47,11 @@ class SpircHandler {
 
   typedef std::function<void(std::unique_ptr<Event>)> EventHandler;
 
+  enum class NotifyType {
+    STATE,   // 200ms delay - general state changes
+    VOLUME   // 500ms delay - volume changes
+  };
+
   void subscribeToMercury();
   std::shared_ptr<TrackPlayer> getTrackPlayer();
 
@@ -60,6 +71,7 @@ class SpircHandler {
   std::shared_ptr<cspot::TrackQueue> getTrackQueue() { return trackQueue; }
 
   void disconnect();
+  void processDebouncing();  // Process pending debounced notifications
 
  private:
   std::shared_ptr<cspot::Context> ctx;
@@ -70,13 +82,29 @@ class SpircHandler {
 
   std::shared_ptr<cspot::PlaybackState> playbackState;
 
-  void sendCmd(MessageType typ);
+  // Debouncing state for protocol compliance (Phase 3)
+  bool pendingNotify = false;
+  bool pendingVolumeNotify = false;
+  uint64_t lastNotifyRequestMs = 0;
+  uint64_t lastVolumeNotifyRequestMs = 0;
+  std::string notifyTriggerReason;
+  std::string volumeTriggerReason;
+  
+#if CSPOT_DEBUG_NODELAY
+  static constexpr uint32_t UPDATE_STATE_DELAY_MS = 0;     // DEBUG: No delay
+  static constexpr uint32_t VOLUME_UPDATE_DELAY_MS = 0;    // DEBUG: No delay
+#else
+  static constexpr uint32_t UPDATE_STATE_DELAY_MS = 200;   // General state updates
+  static constexpr uint32_t VOLUME_UPDATE_DELAY_MS = 500;  // Volume changes
+#endif
+
+  void sendCmd(MessageType typ, const std::string& triggerReason = "");
 
   void sendEvent(EventType type);
   void sendEvent(EventType type, EventData data);
 
   bool skipSong(TrackQueue::SkipDirection dir);
   void handleFrame(std::vector<uint8_t>& data);
-  void notify();
+  void notify(NotifyType type, const std::string& reason);
 };
 }  // namespace cspot

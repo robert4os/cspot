@@ -322,12 +322,16 @@ static const char* playStatusToString(PlayStatus status) {
   }
 }
 
-std::string PlaybackState::dumpFrameForDebug(MessageType typ) {
+std::string PlaybackState::dumpFrameForDebug(MessageType typ, const std::string& triggerReason) {
   std::stringstream ss;
   
   ss << "\n========================================\n";
-  ss << "SPIRC Frame Dump\n";
+  ss << "SPIRC Frame Dump (OUTGOING)\n";
   ss << "========================================\n";
+  if (!triggerReason.empty()) {
+    ss << "\n--- Debug Info ---\n";
+    ss << "Trigger Reason: " << triggerReason << "\n";
+  }
   ss << "Message Type: " << messageTypeToString(typ) << " (" << typ << ")\n";
   ss << "Version: " << innerFrame.version << "\n";
   ss << "Sequence Number: " << innerFrame.seq_nr << "\n";

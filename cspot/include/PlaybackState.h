@@ -110,9 +110,10 @@ class PlaybackState {
      * @brief Dumps current frame in human-readable format for debugging.
      *
      * @param typ message type being sent
+     * @param triggerReason optional debug string explaining why frame was sent
      * @return std::string human-readable frame description
      */
-  std::string dumpFrameForDebug(MessageType typ);
+  std::string dumpFrameForDebug(MessageType typ, const std::string& triggerReason = "");
 
   /**
      * @brief Dumps incoming remote frame in human-readable format for debugging.

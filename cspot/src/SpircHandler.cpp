@@ -68,7 +68,8 @@ SpircHandler::SpircHandler(std::shared_ptr<cspot::Context> ctx) {
                                            : PlaybackState::State::Playing);
     playbackState->updatePositionMs(track->requestedPosition);
 
-    this->notify();
+    // Don't notify here - status hasn't changed (still Playing/Paused)
+    // notify() will be called by notifyAudioReachedPlayback() when renderer starts
 
     // Send playback start event, pause/unpause per request
     sendEvent(EventType::PLAYBACK_START, (int)track->requestedPosition);
@@ -115,7 +116,7 @@ void SpircHandler::loadTrackFromURI(const std::string& uri) {}
 
 void SpircHandler::notifyAudioEnded() {
   playbackState->updatePositionMs(0);
-  notify();
+  notify(NotifyType::STATE, "Track ended");
   trackPlayer->resetState(true);
 }
 
@@ -141,14 +142,31 @@ void SpircHandler::notifyAudioReachedPlayback() {
     currentTrack = trackQueue->consumeTrack(nullptr, offset);
   }
 
-  this->notify();
+  this->notify(NotifyType::STATE, "Track reached playback (decoder started)");
 
   sendEvent(EventType::TRACK_INFO, currentTrack->trackInfo);
 }
 
 void SpircHandler::updatePositionMs(uint32_t position) {
+  // Get current state for drift detection
+  uint32_t oldPosition = playbackState->innerFrame.state.position_ms;
+  uint64_t oldMeasuredAt = playbackState->innerFrame.state.position_measured_at;
+  uint64_t now = ctx->timeProvider->getSyncedTimestamp();
+  
+  // Calculate expected position based on time elapsed (client-side prediction)
+  uint64_t elapsedMs = now - oldMeasuredAt;
+  uint32_t expectedPosition = oldPosition + elapsedMs;
+  
+  // Only notify if position drift exceeds 100ms threshold (per Spotify protocol)
+  int32_t drift = (int32_t)position - (int32_t)expectedPosition;
+  bool significantDrift = std::abs(drift) > 100;
+  
   playbackState->updatePositionMs(position);
-  notify();
+  
+  if (significantDrift) {
+    CSPOT_LOG(debug, "[POSITION] Drift %d ms exceeds threshold, notifying", drift);
+    notify(NotifyType::STATE, "Position drift correction");
+  }
 }
 
 void SpircHandler::disconnect() {
@@ -252,21 +270,21 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
 
       playbackState->updatePositionMs(seekPosition);
 
-      notify();
+      notify(NotifyType::STATE, "Seek operation");
 
       sendEvent(EventType::SEEK, (int)seekPosition);
       break;
     }
     case MessageType_kMessageTypeVolume:
       playbackState->setVolume(playbackState->remoteFrame.volume);
-      this->notify();
+      this->notify(NotifyType::VOLUME, "Volume frame from client");
       sendEvent(EventType::VOLUME, (int)playbackState->remoteFrame.volume);
       break;
     case MessageType_kMessageTypePause:
       // Don't sync position from remote - we are the authoritative source
       // Just pause at our current playback position
       playbackState->innerFrame.state.status = PlayStatus_kPlayStatusPause;
-      notify();
+      notify(NotifyType::STATE, "Pause command from client");
       sendEvent(EventType::PLAY_PAUSE, true);
       break;
     case MessageType_kMessageTypePlay:
@@ -317,7 +335,7 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
       // Update track list with the same position
       trackQueue->updateTracks(startPosition, true);
 
-      this->notify();
+      this->notify(NotifyType::STATE, "Load frame - new track queue");
 
       // Stop the current track, if any
       trackPlayer->resetState();
@@ -335,7 +353,7 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
               playbackState->innerFrame.state.position_measured_at,
           false);
 
-      this->notify();
+      this->notify(NotifyType::STATE, "Replace frame - queue updated");
 
       // need to re-load all if streaming track is completed
       if (cleared) {
@@ -352,7 +370,7 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
         playbackState->setShuffle(playbackState->remoteFrame.state.shuffle);
       }
 
-      this->notify();
+      this->notify(NotifyType::STATE, "Shuffle state change");
       break;
     }
     case MessageType_kMessageTypeRepeat: {
@@ -363,21 +381,67 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
         playbackState->setRepeat(playbackState->remoteFrame.state.repeat);
       }
 
-      this->notify();
+      this->notify(NotifyType::STATE, "Repeat state change");
       break;
     }
     default:
       break;
   }
+  
+  // Debouncing is handled by periodic processDebouncing() call in main loop (spotify.cpp)
+  // No need to call here - would cause timing issues with delay windows
 }
 
 void SpircHandler::setRemoteVolume(int volume) {
   playbackState->setVolume(volume);
-  notify();
+  notify(NotifyType::VOLUME, "Volume set remotely");
 }
 
-void SpircHandler::notify() {
-  this->sendCmd(MessageType_kMessageTypeNotify);
+void SpircHandler::notify(NotifyType type, const std::string& reason) {
+  // Runtime check for unexpected notify types
+  if (type != NotifyType::STATE && type != NotifyType::VOLUME) {
+    CSPOT_LOG(error, "[NOTIFY] Unexpected notify type: %d - defaulting to STATE", (int)type);
+    type = NotifyType::STATE;
+  }
+  
+  // NOTE: Both STATE and VOLUME use the same sendCmd(MessageType_kMessageTypeNotify) which sends
+  // a full PlaybackState frame including position, status, AND volume. We don't support separate
+  // volume-only frames yet. However, the debouncing mechanism fuses multiple updates that arrive
+  // within the delay window into a single frame. The 500ms delay for VOLUME (vs 200ms for STATE)
+  // provides more opportunity for fusion, reducing the total number of frames sent.
+  
+  if (type == NotifyType::VOLUME) {
+    // Debounce volume updates (500ms delay per Spotify protocol)
+    pendingVolumeNotify = true;
+    lastVolumeNotifyRequestMs = ctx->timeProvider->getSyncedTimestamp();
+    volumeTriggerReason = reason;
+  } else { // NotifyType::STATE
+    // Debounce state updates (200ms delay per Spotify protocol)
+    pendingNotify = true;
+    lastNotifyRequestMs = ctx->timeProvider->getSyncedTimestamp();
+    notifyTriggerReason = reason;
+  }
+}
+
+void SpircHandler::processDebouncing() {
+  uint64_t now = ctx->timeProvider->getSyncedTimestamp();
+  
+  // Check if volume notification should be sent (500ms elapsed)
+  if (pendingVolumeNotify && (now - lastVolumeNotifyRequestMs >= VOLUME_UPDATE_DELAY_MS)) {
+    pendingVolumeNotify = false;
+    this->sendCmd(MessageType_kMessageTypeNotify, volumeTriggerReason);
+    CSPOT_LOG(debug, "[DEBOUNCE] VOLUME notify sent after %llu ms - %s", now - lastVolumeNotifyRequestMs, volumeTriggerReason.c_str());
+    volumeTriggerReason.clear();
+    return; // Only send one notify per cycle
+  }
+  
+  // Check if general state notification should be sent (200ms elapsed)
+  if (pendingNotify && (now - lastNotifyRequestMs >= UPDATE_STATE_DELAY_MS)) {
+    pendingNotify = false;
+    this->sendCmd(MessageType_kMessageTypeNotify, notifyTriggerReason);
+    CSPOT_LOG(debug, "[DEBOUNCE] STATE notify sent after %llu ms - %s", now - lastNotifyRequestMs, notifyTriggerReason.c_str());
+    notifyTriggerReason.clear();
+  }
 }
 
 bool SpircHandler::skipSong(TrackQueue::SkipDirection dir) {
@@ -402,7 +466,7 @@ std::shared_ptr<TrackPlayer> SpircHandler::getTrackPlayer() {
   return this->trackPlayer;
 }
 
-void SpircHandler::sendCmd(MessageType typ) {
+void SpircHandler::sendCmd(MessageType typ, const std::string& triggerReason) {
   // Serialize current player state
   auto encodedFrame = playbackState->encodeCurrentFrame(typ);
   
@@ -422,7 +486,7 @@ void SpircHandler::sendCmd(MessageType typ) {
       time_t now_time = std::chrono::system_clock::to_time_t(now);
       
       outFile << "\n=== OUTGOING FRAME ===" << std::ctime(&now_time);
-      outFile << playbackState->dumpFrameForDebug(typ);
+      outFile << playbackState->dumpFrameForDebug(typ, triggerReason);
       outFile << "Encoded Size: " << encodedFrame.size() << " bytes\n";
       outFile << "\n";
       
@@ -454,7 +518,7 @@ void SpircHandler::setPause(bool isPaused) {
     // Recalibrate playback timer to exclude paused time
     trackPlayer->recalibrateTimer();
   }
-  notify();
+  notify(NotifyType::STATE, isPaused ? "Paused by application" : "Resumed by application");
   sendEvent(EventType::PLAY_PAUSE, isPaused);
 }
 
