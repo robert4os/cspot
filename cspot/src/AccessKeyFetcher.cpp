@@ -445,36 +445,35 @@ void AccessKeyFetcher::updateAccessKeyOAuth2() {
   do {
     attemptNumber++;
     
-    // Convert postBody string to vector<uint8_t>
-    std::vector<uint8_t> postBodyBytes(postBody.begin(), postBody.end());
-    
-    // POST to Spotify OAuth token endpoint
-    auto response = bell::HTTPClient::post(
-        "https://accounts.spotify.com/api/token",
-        {{"Content-Type", "application/x-www-form-urlencoded"}},
-        postBodyBytes);
-
-    // Check HTTP status
-    int statusCode = response->statusCode();
-    if (statusCode != 200) {
-      CSPOT_LOG(error, "OAuth2 token refresh failed: HTTP %d", statusCode);
+    try {
+      // Convert postBody string to vector<uint8_t>
+      std::vector<uint8_t> postBodyBytes(postBody.begin(), postBody.end());
       
-      // Apply exponential backoff before retrying or exiting
-      if (retryCount > 0) {
-        int delayMs = (attemptNumber == 1) ? 1000 : (attemptNumber == 2) ? 2000 : 5000;
-        CSPOT_LOG(info, "Retrying in %d seconds... (%d attempts remaining)", delayMs/1000, retryCount);
-        BELL_SLEEP_MS(delayMs);
-        retryCount--;
-        continue;
-      } else {
-        CSPOT_LOG(error, "FATAL: Cannot refresh OAuth2 token - HTTP error (all retries exhausted)");
-        globalPermanentFailure = true;
-        keyPending = false;
-        std::raise(SIGTERM);
-        BELL_SLEEP_MS(1000);
-        exit(1);
+      // POST to Spotify OAuth token endpoint (can throw on network/TLS errors)
+      auto response = bell::HTTPClient::post(
+          "https://accounts.spotify.com/api/token",
+          {{"Content-Type", "application/x-www-form-urlencoded"}},
+          postBodyBytes);
+
+      // Check HTTP status
+      int statusCode = response->statusCode();
+      if (statusCode != 200) {
+        CSPOT_LOG(error, "OAuth2 token refresh failed: HTTP %d", statusCode);
+        
+        // Apply exponential backoff before retrying or exiting
+        if (retryCount > 0) {
+          int delayMs = (attemptNumber == 1) ? 1000 : (attemptNumber == 2) ? 2000 : 5000;
+          CSPOT_LOG(info, "Retrying in %d seconds... (%d attempts remaining)", delayMs/1000, retryCount);
+          BELL_SLEEP_MS(delayMs);
+          retryCount--;
+          continue;
+        } else {
+          CSPOT_LOG(error, "Cannot refresh OAuth2 token - HTTP error (all retries exhausted)");
+          CSPOT_LOG(error, "Will continue with current token and retry on next access key request");
+          keyPending = false;
+          return;
+        }
       }
-    }
 
     // Parse JSON response
     std::string_view responseBody = response->body();
@@ -489,11 +488,10 @@ void AccessKeyFetcher::updateAccessKeyOAuth2() {
         retryCount--;
         continue;
       } else {
-        globalPermanentFailure = true;
+        CSPOT_LOG(error, "Cannot refresh OAuth2 token - invalid JSON (all retries exhausted)");
+        CSPOT_LOG(error, "Will continue with current token and retry on next access key request");
         keyPending = false;
-        std::raise(SIGTERM);
-        BELL_SLEEP_MS(1000);
-        exit(1);
+        return;
       }
     }
 
@@ -523,18 +521,16 @@ void AccessKeyFetcher::updateAccessKeyOAuth2() {
       if (retryCount > 0) {
         int delayMs = (attemptNumber == 1) ? 1000 : (attemptNumber == 2) ? 2000 : 5000;
         BELL_SLEEP_MS(delayMs);
-        retryCount--;
-        continue;
+        retryCount--;\n        continue;
       } else {
-        globalPermanentFailure = true;
+        CSPOT_LOG(error, \"Cannot refresh OAuth2 token - %s (all retries exhausted)\", error.c_str());
+        CSPOT_LOG(error, \"Will continue with current token and retry on next access key request\");
         keyPending = false;
-        std::raise(SIGTERM);
-        BELL_SLEEP_MS(1000);
-        exit(1);
+        return;
       }
     }
 
-    cJSON* newAccessTokenItem = cJSON_GetObjectItem(json, "access_token");
+    cJSON* newAccessTokenItem = cJSON_GetObjectItem(json, \"access_token\");
     cJSON* expiresInItem = cJSON_GetObjectItem(json, "expires_in");
     
     if (!newAccessTokenItem || !cJSON_IsString(newAccessTokenItem)) {
@@ -546,11 +542,10 @@ void AccessKeyFetcher::updateAccessKeyOAuth2() {
         retryCount--;
         continue;
       } else {
-        globalPermanentFailure = true;
+        CSPOT_LOG(error, "Cannot refresh OAuth2 token - malformed response (all retries exhausted)");
+        CSPOT_LOG(error, "Will continue with current token and retry on next access key request");
         keyPending = false;
-        std::raise(SIGTERM);
-        BELL_SLEEP_MS(1000);
-        exit(1);
+        return;
       }
     }
 
@@ -570,11 +565,10 @@ void AccessKeyFetcher::updateAccessKeyOAuth2() {
         retryCount--;
         continue;
       } else {
-        globalPermanentFailure = true;
+        CSPOT_LOG(error, "Cannot refresh OAuth2 token - invalid JSON (all retries exhausted)");
+        CSPOT_LOG(error, "Will continue with current token and retry on next access key request");
         keyPending = false;
-        std::raise(SIGTERM);
-        BELL_SLEEP_MS(1000);
-        exit(1);
+        return;
       }
     }
 
@@ -604,11 +598,10 @@ void AccessKeyFetcher::updateAccessKeyOAuth2() {
         retryCount--;
         continue;
       } else {
-        globalPermanentFailure = true;
+        CSPOT_LOG(error, "Cannot refresh OAuth2 token - %s (all retries exhausted)", error.c_str());
+        CSPOT_LOG(error, "Will continue with current token and retry on next access key request");
         keyPending = false;
-        std::raise(SIGTERM);
-        BELL_SLEEP_MS(1000);
-        exit(1);
+        return;
       }
     }
 
@@ -620,11 +613,10 @@ void AccessKeyFetcher::updateAccessKeyOAuth2() {
         retryCount--;
         continue;
       } else {
-        globalPermanentFailure = true;
+        CSPOT_LOG(error, "Cannot refresh OAuth2 token - malformed response (all retries exhausted)");
+        CSPOT_LOG(error, "Will continue with current token and retry on next access key request");
         keyPending = false;
-        std::raise(SIGTERM);
-        BELL_SLEEP_MS(1000);
-        exit(1);
+        return;
       }
     }
 
@@ -673,6 +665,25 @@ void AccessKeyFetcher::updateAccessKeyOAuth2() {
     
     success = true;
     retryCount--;
+    
+    } catch (const std::exception& e) {
+      // Network error: TLS handshake failure, DNS error, connection refused, etc.
+      CSPOT_LOG(error, "OAuth2 token refresh network error: %s", e.what());
+      
+      if (retryCount > 0) {
+        int delayMs = (attemptNumber == 1) ? 1000 : (attemptNumber == 2) ? 2000 : 5000;
+        CSPOT_LOG(info, "Network error, retrying in %d seconds... (%d attempts remaining)", 
+                  delayMs/1000, retryCount);
+        BELL_SLEEP_MS(delayMs);
+        retryCount--;
+        continue;
+      } else {
+        CSPOT_LOG(error, "Cannot refresh OAuth2 token - network error (all retries exhausted)");
+        CSPOT_LOG(error, "Will continue with current token and retry on next access key request");
+        keyPending = false;
+        return;
+      }
+    }
   } while (retryCount >= 0 && !success);
 
   keyPending = false;
