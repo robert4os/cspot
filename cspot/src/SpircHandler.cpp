@@ -393,6 +393,12 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
 }
 
 void SpircHandler::setRemoteVolume(int volume) {
+  // Spotify protocol uses u16 for volume (0-65535 valid range)
+  if (volume < 0 || volume > 65535) {
+    CSPOT_LOG(error, "[VOLUME] Invalid volume value: %d (must be 0-65535), ignoring", volume);
+    return;
+  }
+  
   playbackState->setVolume(volume);
   notify(NotifyType::VOLUME, "Volume set remotely");
 }
