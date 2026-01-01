@@ -70,6 +70,7 @@ SpircHandler::SpircHandler(std::shared_ptr<cspot::Context> ctx) {
 
     // Don't notify here - status hasn't changed (still Playing/Paused)
     // notify() will be called by notifyAudioReachedPlayback() when renderer starts
+    // The actual notify was deleted in this commenting commit 84b018df on Dec 31, 2025.
 
     // Send playback start event, pause/unpause per request
     sendEvent(EventType::PLAYBACK_START, (int)track->requestedPosition);

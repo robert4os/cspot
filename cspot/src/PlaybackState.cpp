@@ -197,10 +197,13 @@ bool PlaybackState::decodeRemoteFrame(std::vector<uint8_t>& data) {
 }
 
 std::vector<uint8_t> PlaybackState::encodeCurrentFrame(MessageType typ) {
+  // Always update position_measured_at to NOW before sending, regardless of status
+  // This prevents client-side prediction errors due to stale timestamps
+  uint64_t now = ctx->timeProvider->getSyncedTimestamp();
+  
   // Update position based on elapsed time if playing
   // This ensures Spotify UI shows correct position even without frequent SHADOW_TIME updates
   if (innerFrame.state.status == PlayStatus_kPlayStatusPlay) {
-    uint64_t now = ctx->timeProvider->getSyncedTimestamp();
     uint64_t prev_measured = innerFrame.state.position_measured_at;
     uint32_t prev_pos = innerFrame.state.position_ms;
     uint32_t elapsed = now - innerFrame.state.position_measured_at;
@@ -218,6 +221,11 @@ std::vector<uint8_t> PlaybackState::encodeCurrentFrame(MessageType typ) {
     } else {
       CSPOT_LOG(info, "Position update SKIPPED: elapsed=%u ms (>= 60000)", elapsed);
     }
+  } else {
+    // When paused/stopped, keep position but update measured_at to prevent stale timestamps
+    innerFrame.state.position_measured_at = now;
+    CSPOT_LOG(debug, "[ENCODE] Paused/Stopped: updated measured_at to %llu (pos=%u unchanged)",
+              now, innerFrame.state.position_ms);
   }
   
   // Prepare current frame info
