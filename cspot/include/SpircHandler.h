@@ -73,6 +73,15 @@ class SpircHandler {
   void disconnect();
   void processDebouncing();  // Process pending debounced notifications
 
+  // Debouncing delay constants (public for configuration checking)
+#if CSPOT_DEBUG_NODELAY
+  static constexpr uint32_t UPDATE_STATE_DELAY_MS = 0;     // DEBUG: No delay
+  static constexpr uint32_t VOLUME_UPDATE_DELAY_MS = 0;    // DEBUG: No delay
+#else
+  static constexpr uint32_t UPDATE_STATE_DELAY_MS = 200;   // General state updates
+  static constexpr uint32_t VOLUME_UPDATE_DELAY_MS = 500;  // Volume changes
+#endif
+
  private:
   std::shared_ptr<cspot::Context> ctx;
   std::shared_ptr<cspot::TrackPlayer> trackPlayer;
@@ -89,14 +98,6 @@ class SpircHandler {
   uint64_t lastVolumeNotifyRequestMs = 0;
   std::string notifyTriggerReason;
   std::string volumeTriggerReason;
-  
-#if CSPOT_DEBUG_NODELAY
-  static constexpr uint32_t UPDATE_STATE_DELAY_MS = 0;     // DEBUG: No delay
-  static constexpr uint32_t VOLUME_UPDATE_DELAY_MS = 0;    // DEBUG: No delay
-#else
-  static constexpr uint32_t UPDATE_STATE_DELAY_MS = 200;   // General state updates
-  static constexpr uint32_t VOLUME_UPDATE_DELAY_MS = 500;  // Volume changes
-#endif
 
   void sendCmd(MessageType typ, const std::string& triggerReason = "");
 

@@ -399,6 +399,7 @@ void SpircHandler::setRemoteVolume(int volume) {
     return;
   }
   
+  CSPOT_LOG(debug, "[VOLUME] setRemoteVolume called with volume=%d", volume);
   playbackState->setVolume(volume);
   notify(NotifyType::VOLUME, "Volume set remotely");
 }
