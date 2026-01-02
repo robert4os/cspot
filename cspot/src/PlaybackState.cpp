@@ -112,6 +112,7 @@ void PlaybackState::setPlaybackState(const PlaybackState::State state) {
       // This allows position tracking to work correctly during continuous playback
       break;
     case State::Stopped:
+      innerFrame.state.status = PlayStatus_kPlayStatusStop;
       break;
     case State::Paused:
       // Update state and recalculate current song position

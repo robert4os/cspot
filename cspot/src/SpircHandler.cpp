@@ -116,7 +116,12 @@ void SpircHandler::subscribeToMercury() {
 void SpircHandler::loadTrackFromURI(const std::string& uri) {}
 
 void SpircHandler::notifyAudioEnded() {
-  playbackState->updatePositionMs(0);
+  // Don't reset position - cursor should stay at track end to show it completed naturally
+  // playbackState->updatePositionMs(0);
+  
+  // Set playback state to Stopped (playlist depleted, not paused mid-track)
+  playbackState->setPlaybackState(PlaybackState::State::Stopped);
+  
   notify(NotifyType::STATE, "Track ended");
   trackPlayer->resetState(true);
 }
