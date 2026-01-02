@@ -667,13 +667,19 @@ bool TrackQueue::isFinished() {
   // If repeat is enabled, queue never finishes
   if (playbackState->innerFrame.state.has_repeat && 
       playbackState->innerFrame.state.repeat) {
-    CSPOT_LOG(debug, "[REPEAT] isFinished=false (repeat enabled, index=%d/%zu)", 
-             currentTracksIndex, currentTracks.size());
+    if (lastFinishedState != false) {
+      CSPOT_LOG(debug, "[REPEAT] isFinished=false (repeat enabled, index=%d/%zu)", 
+               currentTracksIndex, currentTracks.size());
+      lastFinishedState = false;
+    }
     return false;
   }
   bool finished = currentTracksIndex >= currentTracks.size() - 1;
-  CSPOT_LOG(debug, "[REPEAT] isFinished=%s (no repeat, index=%d/%zu)", 
-           finished ? "true" : "false", currentTracksIndex, currentTracks.size());
+  if (lastFinishedState != finished) {
+    CSPOT_LOG(debug, "[REPEAT] isFinished=%s (no repeat, index=%d/%zu)", 
+             finished ? "true" : "false", currentTracksIndex, currentTracks.size());
+    lastFinishedState = finished;
+  }
   return finished;
 }
 

@@ -127,6 +127,7 @@ class TrackQueue : public bell::Task {
   std::string accessKey;
 
   int16_t currentTracksIndex = -1;
+  bool lastFinishedState = false;  // Track last isFinished() result to reduce log spam
 
   bool isRunning = false;
 

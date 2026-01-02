@@ -21,13 +21,10 @@
 
 using namespace cspot;
 
-LoginBlob::LoginBlob(std::string name, std::string deviceIdPrefix) {
-  char hash[32];
-  sprintf(hash, "%016zu", std::hash<std::string>{}(name));
-  
-  // deviceIdPrefix should always be provided by spotupnp.c (generated or loaded from config)
-  // base deviceId format: 24-char hex prefix + 16-char hash = 40 chars total
-  this->deviceId = deviceIdPrefix + std::string(hash);
+LoginBlob::LoginBlob(std::string name, std::string deviceId) {
+  // deviceId is now fully built in C code (spotupnp.c) before this constructor is called
+  // Format: 24-char deviceIdPrefix + 16-char hash of name = 40 chars total
+  this->deviceId = deviceId;
   this->crypto = std::make_unique<Crypto>();
   this->name = name;
 

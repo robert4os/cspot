@@ -69,6 +69,7 @@ class SpircHandler {
   void setRemoteVolume(int volume);
   void loadTrackFromURI(const std::string& uri);
   std::shared_ptr<cspot::TrackQueue> getTrackQueue() { return trackQueue; }
+  std::shared_ptr<cspot::PlaybackState> getPlaybackState() { return playbackState; }
 
   void disconnect();
   void processDebouncing();  // Process pending debounced notifications
