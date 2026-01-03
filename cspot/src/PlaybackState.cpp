@@ -106,16 +106,22 @@ void PlaybackState::setPlaybackState(const PlaybackState::State state) {
       // This ensures we don't add paused time to the position calculation
       innerFrame.state.position_measured_at = ctx->timeProvider->getSyncedTimestamp();
       break;
-    case State::Stopped:
+    case State::Stopped: {
+      // Update state and recalculate current song position at stop
       innerFrame.state.status = PlayStatus_kPlayStatusStop;
+      uint64_t diff = ctx->timeProvider->getSyncedTimestamp() -
+                      innerFrame.state.position_measured_at;
+      this->updatePositionMs(innerFrame.state.position_ms + diff);
       break;
-    case State::Paused:
+    }
+    case State::Paused: {
       // Update state and recalculate current song position
       innerFrame.state.status = PlayStatus_kPlayStatusPause;
       uint64_t diff = ctx->timeProvider->getSyncedTimestamp() -
                       innerFrame.state.position_measured_at;
       this->updatePositionMs(innerFrame.state.position_ms + diff);
       break;
+    }
   }
 }
 
