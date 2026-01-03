@@ -102,14 +102,9 @@ void PlaybackState::setPlaybackState(const PlaybackState::State state) {
       break;
     case State::Playing:
       innerFrame.state.status = PlayStatus_kPlayStatusPlay;
-      // Initialize position_measured_at if not set (first time playing)
-      if (innerFrame.state.position_measured_at == 0) {
-        innerFrame.state.position_measured_at = ctx->timeProvider->getSyncedTimestamp();
-        CSPOT_LOG(info, "[POSITION] Initialized position_measured_at=%llu", 
-                  innerFrame.state.position_measured_at);
-      }
-      // Don't reset position_measured_at here - let encodeCurrentFrame() update it
-      // This allows position tracking to work correctly during continuous playback
+      // CRITICAL: Always update position_measured_at to NOW when starting/resuming playback
+      // This ensures we don't add paused time to the position calculation
+      innerFrame.state.position_measured_at = ctx->timeProvider->getSyncedTimestamp();
       break;
     case State::Stopped:
       innerFrame.state.status = PlayStatus_kPlayStatusStop;

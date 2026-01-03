@@ -64,16 +64,26 @@ SpircHandler::SpircHandler(std::shared_ptr<cspot::Context> ctx) {
 
   auto trackLoadedCallback = [this](std::shared_ptr<QueuedTrack> track,
                                     bool paused = false) {
+    // Validate position against track duration (per librespot behavior)
+    // Position >= duration should be clamped to 0
+    uint32_t validatedPosition = track->requestedPosition;
+    if (track->requestedPosition >= track->trackInfo.duration) {
+      CSPOT_LOG(error, "Invalid start position %u ms exceeds track duration %u ms, clamping to 0",
+                track->requestedPosition, track->trackInfo.duration);
+      validatedPosition = 0;
+      track->requestedPosition = 0;  // Update the track object too
+    }
+    
     playbackState->setPlaybackState(paused ? PlaybackState::State::Paused
                                            : PlaybackState::State::Playing);
-    playbackState->updatePositionMs(track->requestedPosition);
+    playbackState->updatePositionMs(validatedPosition);
 
     // Don't notify here - status hasn't changed (still Playing/Paused)
     // notify() will be called by notifyAudioReachedPlayback() when renderer starts
     // The actual notify was deleted in this commenting commit 84b018df on Dec 31, 2025.
 
-    // Send playback start event, pause/unpause per request
-    sendEvent(EventType::PLAYBACK_START, (int)track->requestedPosition);
+    // Send playback start event with validated position
+    sendEvent(EventType::PLAYBACK_START, (int)validatedPosition);
     sendEvent(EventType::PLAY_PAUSE, paused);
   };
 
@@ -287,11 +297,7 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
       sendEvent(EventType::VOLUME, (int)playbackState->remoteFrame.volume);
       break;
     case MessageType_kMessageTypePause:
-      // Don't sync position from remote - we are the authoritative source
-      // Just pause at our current playback position
-      playbackState->innerFrame.state.status = PlayStatus_kPlayStatusPause;
-      notify(NotifyType::STATE, "Pause command from client");
-      sendEvent(EventType::PLAY_PAUSE, true);
+      setPause(true);
       break;
     case MessageType_kMessageTypePlay:
       setPause(false);
