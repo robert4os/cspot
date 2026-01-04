@@ -291,11 +291,14 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
       sendEvent(EventType::SEEK, (int)seekPosition);
       break;
     }
-    case MessageType_kMessageTypeVolume:
-      playbackState->setVolume(playbackState->remoteFrame.volume);
-      this->notify(NotifyType::VOLUME, "Volume frame from client");
-      sendEvent(EventType::VOLUME, (int)playbackState->remoteFrame.volume);
+    case MessageType_kMessageTypeVolume: {
+      uint32_t newVolume = playbackState->remoteFrame.volume;
+      
+      playbackState->setVolume(newVolume);
+      this->notify(NotifyType::VOLUME, "Volume frame from client");     
+      sendEvent(EventType::VOLUME, (int)newVolume);
       break;
+    }
     case MessageType_kMessageTypePause:
       setPause(true);
       break;
@@ -411,7 +414,14 @@ void SpircHandler::setRemoteVolume(int volume) {
     return;
   }
   
-  CSPOT_LOG(debug, "[VOLUME] setRemoteVolume called with volume=%d", volume);
+  // Check if volume actually changed - avoid unnecessary SPIRC frames
+  uint32_t currentVolume = playbackState->getVolume();
+  if ((uint32_t)volume == currentVolume) {
+    CSPOT_LOG(debug, "[VOLUME] Volume unchanged (%d) - skipping notify", volume);
+    return;
+  }
+  
+  CSPOT_LOG(debug, "[VOLUME] setRemoteVolume called with volume=%d (was %d)", volume, currentVolume);
   playbackState->setVolume(volume);
   notify(NotifyType::VOLUME, "Volume set remotely");
 }

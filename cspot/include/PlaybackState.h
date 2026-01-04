@@ -80,6 +80,13 @@ class PlaybackState {
   void setVolume(uint32_t volume);
 
   /**
+     * @brief Gets current volume.
+     *
+     * @return uint32_t current volume (0-65535)
+     */
+  uint32_t getVolume();
+
+  /**
      * @brief Sets local shuffle state.
      *
      * @param shuffle shuffle status (true = enabled, false = disabled)

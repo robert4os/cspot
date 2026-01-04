@@ -178,6 +178,10 @@ void PlaybackState::setVolume(uint32_t volume) {
   ctx->config.volume = volume;
 }
 
+uint32_t PlaybackState::getVolume() {
+  return innerFrame.device_state.volume;
+}
+
 void PlaybackState::setShuffle(bool shuffle) {
   innerFrame.state.shuffle = shuffle;
   innerFrame.state.has_shuffle = true;
